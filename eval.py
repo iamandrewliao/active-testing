@@ -79,11 +79,12 @@ class ActiveTester:
         # Candidate is in the normalized space [0, 1]^d, so we un-normalize it
         # using the original bounds before returning.
         unnormalized_candidate = self.bounds[0] + candidate * (self.bounds[1] - self.bounds[0])
+        point = unnormalized_candidate.squeeze(0) # Return a 1D tensor
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
-        
-        return unnormalized_candidate.squeeze(0) # Return a 1D tensor
+
+        return point
 
     def update(self, new_x, new_y):
         """Adds a new data point to the training set."""
@@ -102,6 +103,48 @@ class IIDSampler:
         point = self.bounds[0] + (self.bounds[1] - self.bounds[0]) * torch.rand(self.dim, **tkwargs)
         return point
     
+    def update(self, new_x, new_y):
+        """Does nothing."""
+        pass
+
+
+class PointLoader:
+    """
+    A 'sampler' that loads points from a CSV file instead of generating them
+    e.g. if you want to eval multiple policies on the same points
+    """
+    def __init__(self, filepath):
+        print(f"Loading evaluation points from {filepath}...")
+        try:
+            df = pd.read_csv(filepath)
+            if not {'x', 'y'}.issubset(df.columns):
+                raise ValueError("CSV file must contain 'x' and 'y' columns.")
+            
+            self.points = [
+                torch.tensor([row['x'], row['y']], **tkwargs)
+                for _, row in df.iterrows()
+            ]
+        except FileNotFoundError:
+            print(f"Error: The file '{filepath}' was not found.")
+            exit()
+        except Exception as e:
+            print(f"Error reading the file: {e}")
+            exit()
+            
+        self.index = 0
+        print(f"Successfully loaded {len(self.points)} points.")
+
+    def get_next_point(self):
+        """Returns the next point from the pre-loaded list."""
+        if self.index >= len(self.points):
+            print("Error: Ran out of points to load from the file.")
+            print("Adjust --num_evals or provide a file with more points.")
+            exit()
+        
+        point = self.points[self.index]
+        self.index += 1
+        return point
+
     def update(self, new_x, new_y):
         """Does nothing."""
         pass
@@ -172,7 +215,13 @@ def main(args):
     results_data = []
 
     # Initialize Sampler for the Main Loop
-    if args.mode == 'active':
+    sampler = None
+    loop_start_index = 0
+    if args.mode == 'loaded':
+        sampler = PointLoader(args.load_path)
+        print(f"Running evaluation for {len(sampler.points)} loaded points.")
+        args.num_evals = len(sampler.points) # Override num_evals
+    elif args.mode == 'active':
         # Initial Random Sampling: active testing needs a few initial points to build the first model.
         print(f"\n--- Collecting {args.num_init_pts} initial random points ---")
         initial_X = []
@@ -182,7 +231,7 @@ def main(args):
             point = IIDSampler(bounds).get_next_point()
             while not is_valid_point(point):
                 point = IIDSampler(bounds).get_next_point()
-
+            
             binary_outcome, continuous_outcome = run_evaluation(point)
             
             initial_X.append(point)
@@ -198,23 +247,25 @@ def main(args):
                 'binary_outcome': binary_outcome,
                 'continuous_outcome': continuous_outcome
             })
-            
+
         # Convert initial data to tensors
         train_X = torch.stack(initial_X)
         train_Y = torch.stack(initial_Y)
+
         sampler = ActiveTester(train_X, train_Y, bounds)
-    else: # args.mode == 'iid'
-        sampler = IIDSampler(bounds)
+        loop_start_index = args.num_init_pts
+    elif args.mode == 'iid':
+        sampler = IIDSampler(bounds)      
 
     # --- Main Evaluation Loop ---
     print(f"\n--- Starting main evaluation loop with '{args.mode}' sampling ---")
-    for i in range(args.num_init_pts, args.num_evals):
+    for i in range(loop_start_index, args.num_evals):
         print(f"\nTrial {i+1}/{args.num_evals} ({args.mode} sample)")
         
         point = sampler.get_next_point()
         while not is_valid_point(point):
             point = sampler.get_next_point()
-            
+
         binary_outcome, continuous_outcome = run_evaluation(point)
         
         # Convert outcomes to tensors for updating the model
@@ -235,10 +286,16 @@ def main(args):
         })
 
     # --- Save Results ---
-    df = pd.DataFrame(results_data)
-    df.to_csv(args.output_file, index=False)
+    results_df = pd.DataFrame(results_data) # <<< RENAME for clarity
+    results_df.to_csv(args.output_file, index=False)
     print(f"\n✅ Evaluation complete. Results saved to '{args.output_file}'.")
-    print(df)
+    print(results_df)
+
+    # --- Save Generated Points if Requested ---
+    if args.save_points:
+        points_df = results_df[['x', 'y']]
+        points_df.to_csv(args.save_points, index=False)
+        print(f"💾 Evaluation points saved to '{args.save_points}'.")
 
 
 if __name__ == "__main__":
@@ -248,7 +305,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["iid", "active"],
+        choices=["iid", "active", "loaded"],
         required=True,
         help="The sampling strategy to use."
     )
@@ -268,10 +325,26 @@ if __name__ == "__main__":
         "--output_file",
         type=str,
         default="evaluation_results.csv",
-        help="Path to save the CSV results file."
+        help="Path to save the eval results as CSV file."
     )
-    
+    parser.add_argument(
+        "--save_points",
+        type=str,
+        default=None,
+        help="Path to save only the eval points to a CSV file. Note that eval points are already included in eval results."
+    )
+    parser.add_argument(
+        "--load_path",
+        type=str,
+        default=None,
+        help="Path to a CSV file from which to load evaluation points. Could be the full eval results CSV file or just the eval points CSV file."
+    )
+
     args = parser.parse_args()
+
+    if not args.load_path and args.mode=='loaded':
+        parser.error("`load_path` must be specified if loading points")
+
     if args.num_init_pts >= args.num_evals:
         raise ValueError("`num_init_pts` must be less than `num_evals`.")
         
