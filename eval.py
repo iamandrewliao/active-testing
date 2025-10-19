@@ -10,6 +10,7 @@ import argparse
 import pandas as pd
 import torch
 import time
+import os  # Added for checking file existence
 
 from botorch.models import SingleTaskGP
 from botorch.models.transforms import Normalize, Standardize
@@ -150,22 +151,14 @@ class PointLoader:
 
 
 def is_valid_point(point):
-    """
-    Prompts the user to manually confirm if a sampled point is valid.
-    """
+    """Automatically filters out any point past Lightning's reachability (approximated by a straight line)"""
+    # Equation of the boundary line: y = 1.5x - 0.75
+    # A point is 'invalid' if it's on the right side of the line
     x, y = point[0].item(), point[1].item()
-    print("-" * 30)
-    print(f"📍 Sampled point for validation: (x={x:.3f}, y={y:.3f})")
+    # Calculate if the point is in the invalid region
+    is_invalid = (y <= 1.5*x - 0.75) and (x >= 0.5)
     
-    while True:
-        is_valid_str = input("Is this a valid point to evaluate? (y/n): ").lower().strip()
-        if is_valid_str in ['y', 'yes']:
-            return True
-        elif is_valid_str in ['n', 'no']:
-            print("Point marked as invalid by user. Resampling...")
-            return False
-        else:
-            print("Invalid input. Please enter 'y' or 'n'.")
+    return not is_invalid  # Return True if the point is valid
 
 
 def run_evaluation(point):
@@ -177,32 +170,27 @@ def run_evaluation(point):
     print("-" * 30)
     print(f"🤖 Running trial at position: (x={x:.3f}, y={y:.3f})")
     
-    # Get binary success/failure outcome
+    # --- Get continuous outcome ---
     while True:
         try:
-            binary_outcome = int(input("Enter binary outcome (1 for success, 0 for failure): "))
-            if binary_outcome in [0, 1]:
-                break
-            else:
-                print("Invalid input. Please enter 0 or 1.")
-        except ValueError:
-            print("Invalid input. Please enter a number.")
-
-    # Get continuous outcome
-    while True:
-        try:
-            print("0=failed completely, 1=moved to block, 2=grasped block, 3=moved to bowl, 4=dropped into bowl")
-            continuous_outcome = float(input("Enter continuous outcome (0-4) in increments of 0.5: "))
+            print("Enter continuous outcome (0.5 increments):")
+            print("  0=failed completely, 1=moved to block, 2=grasped block, 3=moved to bowl, 4=dropped (success)")
+            continuous_outcome = float(input("Enter outcome (0-4): "))
+            
             # check if in [0, 0.5, ..., 4]
             if continuous_outcome in [i*0.5 for i in range(9)]:
                 break
             else:
-                print("Invalid input. Please enter a number between 0 and 4.")
+                print("Invalid input. Please enter a number between 0 and 4 in 0.5 increments.")
         except ValueError:
             print("Invalid input. Please enter a number.")
+            
+    # --- Derive binary outcome ---
+    binary_outcome = 1.0 if continuous_outcome == 4.0 else 0.0
 
-    # Get number of steps taken (automatically 0 if failed in any capacity)
+    # --- Get number of steps taken ---
     if binary_outcome == 0:
+        print("Failure reported. Setting steps to max.")
         steps_taken = args.max_steps
     else:
         while True:
@@ -223,74 +211,106 @@ def main(args):
     print(f"Starting evaluation with mode: '{args.mode}' for {args.num_evals} trials.")
     
     # Define the search space bounds for our factors [x, y]
-    # Format: torch.tensor([[low_x, low_y], [high_x, high_y]])
     bounds = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
     
     results_data = []
-
-    # Initialize Sampler for the Main Loop
-    sampler = None
     loop_start_index = 0
+
+    # --- Load existing data if available ---
+    if os.path.exists(args.output_file):
+        print(f"Found existing results file: '{args.output_file}'. Resuming session.")
+        try:
+            existing_df = pd.read_csv(args.output_file)
+            if not existing_df.empty:
+                results_data = existing_df.to_dict('records')
+                loop_start_index = len(results_data)
+                print(f"Loaded {loop_start_index} previous trials. Resuming from trial {loop_start_index + 1}.")
+        except pd.errors.EmptyDataError:
+            print(f"Warning: Output file '{args.output_file}' is empty. Starting a new session.")
+        except Exception as e:
+            print(f"Error reading existing results file: {e}. Starting a new session.")
+            results_data = []
+            loop_start_index = 0
+    
+    if loop_start_index >= args.num_evals and args.mode != 'loaded':
+        print(f"Evaluation already complete with {loop_start_index} trials. Exiting.")
+        return
+
+    # --- Initialize Sampler ---
+    sampler = None
     if args.mode == 'loaded':
         sampler = PointLoader(args.load_path)
-        print(f"Running evaluation for {len(sampler.points)} loaded points.")
-        args.num_evals = len(sampler.points) # Override num_evals
-    elif args.mode == 'active':
-        # Initial Random Sampling: active testing needs a few initial points to build the first model.
-        print(f"\n--- Collecting {args.num_init_pts} initial random points ---")
-        initial_X = []
-        initial_Y = []
-        for i in range(args.num_init_pts):
-            print(f"\nTrial {i+1}/{args.num_evals} (Initial Random Sample)")
-            point = IIDSampler(bounds).get_next_point()
-            while not is_valid_point(point):
-                point = IIDSampler(bounds).get_next_point()
-            
-            binary_outcome, continuous_outcome, steps_taken = run_evaluation(point)
-            
-            initial_X.append(point)
-            # Use the binary outcome for the surrogate model
-            # initial_Y.append(torch.tensor([binary_outcome], **tkwargs))
-            # Use the continuous outcome for the surrogate model
-            initial_Y.append(torch.tensor([continuous_outcome], **tkwargs))
-            results_data.append({
-                'trial': i + 1,
-                'mode': 'initial_random',
-                'x': point[0].item(),
-                'y': point[1].item(),
-                'orientation': None,  # Placeholder for future use
-                'binary_outcome': binary_outcome,
-                'continuous_outcome': continuous_outcome,
-                'steps_taken': steps_taken,
-            })
+        args.num_evals = len(sampler.points)  # Override num_evals
+        if loop_start_index > 0:
+            print(f"Skipping the first {loop_start_index} points from the loaded file.")
+            sampler.index = loop_start_index
+        
+        if loop_start_index >= args.num_evals:
+            print("All points from the loaded file have already been evaluated. Exiting.")
+            return
+        
+        print(f"Running evaluation for {args.num_evals - loop_start_index} remaining loaded points.")
 
-            # Save current results
-            results_df = pd.DataFrame(results_data)
-            results_df.to_csv(args.output_file, index=False)
-            print(f"Saved initial point {i+1}/{args.num_init_pts} to '{args.output_file}'")
-
-        # Convert initial data to tensors
-        train_X = torch.stack(initial_X)
-        train_Y = torch.stack(initial_Y)
-
-        sampler = ActiveTester(train_X, train_Y, bounds)
-        loop_start_index = args.num_init_pts
     elif args.mode == 'iid':
-        sampler = IIDSampler(bounds)      
+        sampler = IIDSampler(bounds)
+        
+    elif args.mode == 'active':
+        if loop_start_index >= args.num_init_pts:
+            print(f"Resuming in 'active' mode with {loop_start_index} points.")
+            initial_X_tensors = [torch.tensor([row['x'], row['y']], **tkwargs) for row in results_data]
+            initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
+            train_X = torch.stack(initial_X_tensors)
+            train_Y = torch.stack(initial_Y_tensors)
+            sampler = ActiveTester(train_X, train_Y, bounds)
+        else:
+            print("Not enough data for active learning yet. Starting with initial random sampling.")
+            sampler = IIDSampler(bounds)
 
     # --- Main Evaluation Loop ---
-    print(f"\n--- Starting main evaluation loop with '{args.mode}' sampling ---")
+    print(f"\n--- Starting main evaluation loop ---")
     for i in range(loop_start_index, args.num_evals):
-        print(f"\nTrial {i+1}/{args.num_evals} ({args.mode} sample)")
+        
+        current_mode = args.mode
+        if args.mode == 'active':
+            current_mode = 'initial_random' if i < args.num_init_pts else 'active'
+
+        # --- Handle sampler transition for 'active' mode ---
+        if args.mode == 'active' and i == args.num_init_pts:
+            print("\n" + "="*50)
+            print(f"Reached {args.num_init_pts} initial points. Switching to Active Testing.")
+            print("="*50 + "\n")
+            
+            initial_X_tensors = [torch.tensor([row['x'], row['y']], **tkwargs) for row in results_data]
+            initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
+            train_X = torch.stack(initial_X_tensors)
+            train_Y = torch.stack(initial_Y_tensors)
+            sampler = ActiveTester(train_X, train_Y, bounds)
+
+        print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
         
         point = sampler.get_next_point()
+        
+        # --- Robust validity check ---
         while not is_valid_point(point):
-            point = sampler.get_next_point()
+            print(f"Point (x={point[0]:.3f}, y={point[1]:.3f}) is not valid -> handling...")
+            if args.mode == 'loaded':
+                print(f"Error: The loaded point from trial {i+1} is invalid. Please check your source file.")
+                print("Stopping evaluation.")
+                exit()
+            elif current_mode == 'active':
+                # Fall back to a single random sample for this trial to avoid an infinite loop
+                print("Warning: Active learner suggested an invalid point. Falling back to IID sampling for this one trial.")
+                point = IIDSampler(bounds).get_next_point() 
+                # This will loop again if the *random* point is also invalid, which is fine.
+            else: 
+                # This is 'iid' or 'initial_random'
+                print("Resampling...")
+                point = sampler.get_next_point()
 
         binary_outcome, continuous_outcome, steps_taken = run_evaluation(point)
         
-        # Convert outcomes to tensors for updating the model
-        new_y_tensor = torch.tensor([binary_outcome], **tkwargs)
+        # Use continuous_outcome for the surrogate model, matching initial data collection
+        new_y_tensor = torch.tensor([continuous_outcome], **tkwargs)
         
         # Update the sampler with the new data
         sampler.update(point, new_y_tensor)
@@ -298,7 +318,7 @@ def main(args):
         # Record the results
         results_data.append({
             'trial': i + 1,
-            'mode': args.mode,
+            'mode': current_mode,
             'x': point[0].item(),
             'y': point[1].item(),
             'orientation': None,
@@ -310,11 +330,14 @@ def main(args):
         # Save current results
         results_df = pd.DataFrame(results_data)
         results_df.to_csv(args.output_file, index=False)
-        print(f"Saved {i+1}/{args.num_evals} results to '{args.output_file}'")
+        print(f"Saved results for trial {i+1} to '{args.output_file}'")
+
+    print("\nEvaluation complete.")
 
     # --- Save Generated Points if Requested ---
     if args.save_points:
-        points_df = results_df[['x', 'y']]
+        final_df = pd.DataFrame(results_data)
+        points_df = final_df[['x', 'y']]
         points_df.to_csv(args.save_points, index=False)
         print(f"💾 Evaluation points saved to '{args.save_points}'.")
 
@@ -372,7 +395,7 @@ if __name__ == "__main__":
     if not args.load_path and args.mode=='loaded':
         parser.error("`load_path` must be specified if loading points")
 
-    if args.num_init_pts >= args.num_evals:
-        raise ValueError("`num_init_pts` must be less than `num_evals`.")
+    if args.num_init_pts >= args.num_evals and args.mode == 'active':
+        raise ValueError("`num_init_pts` must be less than `num_evals` for active learning.")
         
     main(args)
