@@ -10,7 +10,6 @@ import argparse
 import pandas as pd
 import torch
 import time
-import math
 
 from botorch.models import SingleTaskGP
 from botorch.models.transforms import Normalize, Standardize
@@ -193,15 +192,30 @@ def run_evaluation(point):
     while True:
         try:
             print("0=failed completely, 1=moved to block, 2=grasped block, 3=moved to bowl, 4=dropped into bowl")
-            continuous_outcome = int(input("Enter continuous outcome (0-4): "))
-            if continuous_outcome in [0, 1, 2, 3, 4]:
+            continuous_outcome = float(input("Enter continuous outcome (0-4) in increments of 0.5: "))
+            # check if in [0, 0.5, ..., 4]
+            if continuous_outcome in [i*0.5 for i in range(9)]:
                 break
             else:
                 print("Invalid input. Please enter a number between 0 and 4.")
         except ValueError:
             print("Invalid input. Please enter a number.")
+
+    # Get number of steps taken (automatically 0 if failed in any capacity)
+    if binary_outcome == 0:
+        steps_taken = args.max_steps
+    else:
+        while True:
+            try:
+                steps_taken = int(input("Enter number of steps taken to complete the task: "))
+                if steps_taken >= 0:
+                    break
+                else:
+                    print("Invalid input. Please enter a non-negative integer.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
             
-    return binary_outcome, continuous_outcome
+    return binary_outcome, continuous_outcome, steps_taken
 
 
 def main(args):
@@ -232,12 +246,13 @@ def main(args):
             while not is_valid_point(point):
                 point = IIDSampler(bounds).get_next_point()
             
-            binary_outcome, continuous_outcome = run_evaluation(point)
+            binary_outcome, continuous_outcome, steps_taken = run_evaluation(point)
             
             initial_X.append(point)
             # Use the binary outcome for the surrogate model
-            initial_Y.append(torch.tensor([binary_outcome], **tkwargs))
-
+            # initial_Y.append(torch.tensor([binary_outcome], **tkwargs))
+            # Use the continuous outcome for the surrogate model
+            initial_Y.append(torch.tensor([continuous_outcome], **tkwargs))
             results_data.append({
                 'trial': i + 1,
                 'mode': 'initial_random',
@@ -245,8 +260,14 @@ def main(args):
                 'y': point[1].item(),
                 'orientation': None,  # Placeholder for future use
                 'binary_outcome': binary_outcome,
-                'continuous_outcome': continuous_outcome
+                'continuous_outcome': continuous_outcome,
+                'steps_taken': steps_taken,
             })
+
+            # Save current results
+            results_df = pd.DataFrame(results_data)
+            results_df.to_csv(args.output_file, index=False)
+            print(f"Saved initial point {i+1}/{args.num_init_pts} to '{args.output_file}'")
 
         # Convert initial data to tensors
         train_X = torch.stack(initial_X)
@@ -266,7 +287,7 @@ def main(args):
         while not is_valid_point(point):
             point = sampler.get_next_point()
 
-        binary_outcome, continuous_outcome = run_evaluation(point)
+        binary_outcome, continuous_outcome, steps_taken = run_evaluation(point)
         
         # Convert outcomes to tensors for updating the model
         new_y_tensor = torch.tensor([binary_outcome], **tkwargs)
@@ -282,14 +303,14 @@ def main(args):
             'y': point[1].item(),
             'orientation': None,
             'binary_outcome': binary_outcome,
-            'continuous_outcome': continuous_outcome
+            'continuous_outcome': continuous_outcome,
+            'steps_taken': steps_taken,
         })
-
-    # --- Save Results ---
-    results_df = pd.DataFrame(results_data) # <<< RENAME for clarity
-    results_df.to_csv(args.output_file, index=False)
-    print(f"\n✅ Evaluation complete. Results saved to '{args.output_file}'.")
-    print(results_df)
+        
+        # Save current results
+        results_df = pd.DataFrame(results_data)
+        results_df.to_csv(args.output_file, index=False)
+        print(f"Saved {i+1}/{args.num_evals} results to '{args.output_file}'")
 
     # --- Save Generated Points if Requested ---
     if args.save_points:
@@ -318,8 +339,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_init_pts",
         type=int,
-        default=5,
+        default=10,
         help="Number of initial random points for bootstrapping the active learning model."
+    )
+    parser.add_argument(
+        "--max_steps",
+        type=int,
+        default=35,
+        help="Maximum number of steps allowed per evaluation."
     )
     parser.add_argument(
         "--output_file",

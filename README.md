@@ -1,8 +1,10 @@
 # Active testing for robot policy evaluation
 ## Key files
 - [./eval.py](./eval.py): Main evaluation script, run alongside robot policy deployment
+
+Example run command:
 ```
-uv run eval.py
+uv run eval.py --mode iid --num_evals 100 --output_file iid_100_results.csv --save_points iid_100_points.csv
 ```
 - [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
 
