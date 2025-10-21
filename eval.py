@@ -3,9 +3,9 @@ Main script for robot policy evaluation.
 '''
 import pandas as pd
 import torch
-from samplers import ActiveTester, IIDSampler, PointLoader
+from samplers import ActiveTester, IIDSampler, ListIteratorSampler
 
-from utils import is_valid_point, run_evaluation, parse_args
+from utils import is_valid_point, run_evaluation, parse_args, get_grid_points
 import os  # Added for checking file existence
 
 tkwargs = {"dtype": torch.double, "device": "cpu"}
@@ -17,6 +17,13 @@ def main(args):
     # Define the search space bounds for our factors [x, y]
     bounds = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
     
+    # --- Generate discrete grid points (if needed) ---
+    # This grid is now used by 'iid' and 'brute_force' modes,
+    # and for the initial points in 'active' mode.
+    grid_points = None
+    if args.mode in ['iid', 'brute_force', 'active']:
+        grid_points = get_grid_points(args.grid_resolution, bounds, tkwargs)
+
     results_data = []
     loop_start_index = 0
 
@@ -36,14 +43,15 @@ def main(args):
             results_data = []
             loop_start_index = 0
     
-    if loop_start_index >= args.num_evals and args.mode != 'loaded':
+    if loop_start_index >= args.num_evals and args.mode not in ['loaded', 'brute_force']:
+        # (Slight change: don't exit if brute_force)
         print(f"Evaluation already complete with {loop_start_index} trials. Exiting.")
         return
 
     # --- Initialize Sampler ---
     sampler = None
     if args.mode == 'loaded':
-        sampler = PointLoader(args.load_path)
+        sampler = ListIteratorSampler(args.load_path)
         args.num_evals = len(sampler.points)  # Override num_evals
         if loop_start_index > 0:
             print(f"Skipping the first {loop_start_index} points from the loaded file.")
@@ -54,9 +62,20 @@ def main(args):
             return
         
         print(f"Running evaluation for {args.num_evals - loop_start_index} remaining loaded points.")
-
+    elif args.mode == 'brute_force':
+        sampler = ListIteratorSampler(grid_points)
+        args.num_evals = len(sampler.points)  # Override num_evals
+        if loop_start_index > 0:
+            print(f"Skipping the first {loop_start_index} points from the grid.")
+            sampler.index = loop_start_index
+        
+        if loop_start_index >= args.num_evals:
+            print("All grid points have already been evaluated. Exiting.")
+            return
+        
+        print(f"Running evaluation for {args.num_evals - loop_start_index} remaining grid points.")
     elif args.mode == 'iid':
-        sampler = IIDSampler(bounds)
+        sampler = IIDSampler(grid_points)
         
     elif args.mode == 'active':
         if loop_start_index >= args.num_init_pts:
@@ -65,10 +84,10 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, bounds)
+            sampler = ActiveTester(train_X, train_Y, grid_points)
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
-            sampler = IIDSampler(bounds)
+            sampler = IIDSampler(grid_points)
 
     # --- Main Evaluation Loop ---
     print(f"\n--- Starting main evaluation loop ---")
@@ -88,7 +107,7 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, bounds)
+            sampler = ActiveTester(train_X, train_Y, grid_points)
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
         
@@ -97,14 +116,14 @@ def main(args):
         # --- Robust validity check ---
         while not is_valid_point(point):
             print(f"Point (x={point[0]:.3f}, y={point[1]:.3f}) is not valid -> handling...")
-            if args.mode == 'loaded':
+            if args.mode in ['loaded', 'brute_force']:
                 print(f"Error: The loaded point from trial {i+1} is invalid. Please check your source file.")
                 print("Stopping evaluation.")
                 exit()
             elif current_mode == 'active':
                 # Fall back to a single random sample for this trial to avoid an infinite loop
                 print("Warning: Active learner suggested an invalid point. Falling back to IID sampling for this one trial.")
-                point = IIDSampler(bounds).get_next_point() 
+                point = IIDSampler(grid_points).get_next_point()
                 # This will loop again if the *random* point is also invalid, which is fine.
             else: 
                 # This is 'iid' or 'initial_random'

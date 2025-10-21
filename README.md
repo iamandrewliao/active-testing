@@ -11,8 +11,8 @@ uv run eval.py --mode iid --num_evals 50 --output_file results/iid_50_results.cs
 Example run commands:
 ```
 uv run viz.py plot-points --results_file results/iid_50_results.csv --out visualizations/iid_points.png
-uv run viz.py plot-active --results_file results/active_50_results.csv --out visualizations/active_plots.png
-uv run viz.py plot-comparison --gt results/brute_force_100_results.csv --model Active results/active_50_results.csv --model IID results/iid_50_results.csv
+uv run viz.py plot-active --grid-resolution 20 --results_file results/active_50_results.csv --out visualizations/active_plots.png
+uv run viz.py plot-comparison --grid-resolution 20 --gt results/brute_force_100_results.csv --model Active results/active_50_results.csv --model IID results/iid_50_results.csv
 ```
 - [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
 

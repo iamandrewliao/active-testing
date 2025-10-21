@@ -17,16 +17,17 @@ from botorch.fit import fit_gpytorch_mll
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.acquisition.joint_entropy_search import qJointEntropySearch
 from botorch.acquisition.utils import get_optimal_samples
-from botorch.optim import optimize_acqf
+from botorch.optim import optimize_acqf, optimize_acqf_discrete
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds):
+    def __init__(self, initial_X, initial_Y, bounds, grid_points):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
+        self.grid_points = grid_points
         self.model = None
 
     def _fit_model(self):
@@ -66,13 +67,19 @@ class ActiveTester:
             estimation_type="LB",
         )
 
-        # 3. Optimize the acquisition function
-        candidate, _ = optimize_acqf(
+        # 3. Optimize the acquisition function (continuous and discrete versions)
+        # there is also a mixed version: optimize_acqf_mixed()
+        # candidate, _ = optimize_acqf(
+        #     acq_function=jes,
+        #     bounds=normalized_bounds,
+        #     q=1,
+        #     num_restarts=4,
+        #     raw_samples=256,
+        # )
+        candidate, _ = optimize_acqf_discrete(
             acq_function=jes,
-            bounds=normalized_bounds,
             q=1,
-            num_restarts=4,
-            raw_samples=256,
+            choices=self.grid_points,
         )
         
         # Candidate is in the normalized space [0, 1]^d, so we un-normalize it
@@ -92,14 +99,19 @@ class ActiveTester:
 
 
 class IIDSampler:
-    def __init__(self, bounds):
-        self.bounds = bounds
-        self.dim = bounds.shape[1]
+    """
+    A sampler that samples *with replacement* from a discrete grid of points.
+    """
+    def __init__(self, grid_points_tensor):
+        self.grid_points = grid_points_tensor
+        self.num_points = self.grid_points.shape[0]
+        print(f"Initialized IIDSampler with {self.num_points} discrete points.")
 
     def get_next_point(self):
-        """Generates a new point by sampling uniformly from the bounds."""
-        # Formula: low + (high - low) * rand
-        point = self.bounds[0] + (self.bounds[1] - self.bounds[0]) * torch.rand(self.dim, **tkwargs)
+        """Generates a new point by sampling uniformly from the grid."""
+        # Randomly select an index
+        idx = torch.randint(low=0, high=self.num_points, size=(1,)).item()
+        point = self.grid_points[idx]
         return point
     
     def update(self, new_x, new_y):
@@ -107,38 +119,51 @@ class IIDSampler:
         pass
 
 
-class PointLoader:
+class ListIteratorSampler:
     """
-    A 'sampler' that loads points from a CSV file instead of generating them
-    e.g. if you want to eval multiple policies on the same points
+    A 'sampler' that iterates through a provided list of points.
+    The list can come from a filepath (for 'loaded' mode)
+    or a pre-computed tensor (for 'brute_force' mode).
     """
-    def __init__(self, filepath):
-        print(f"Loading evaluation points from {filepath}...")
-        try:
-            df = pd.read_csv(filepath)
-            if not {'x', 'y'}.issubset(df.columns):
-                raise ValueError("CSV file must contain 'x' and 'y' columns.")
+    def __init__(self, source):
+        if isinstance(source, str):
+            # --- This is the 'loaded' mode logic (from PointLoader) ---
+            filepath = source
+            print(f"Loading evaluation points from {filepath}...")
+            try:
+                df = pd.read_csv(filepath)
+                if not {'x', 'y'}.issubset(df.columns):
+                    raise ValueError("CSV file must contain 'x' and 'y' columns.")
+                
+                # Convert directly to a single [N, 2] tensor
+                points_np = df[['x', 'y']].values
+                self.points = torch.tensor(points_np, **tkwargs)
+                
+            except FileNotFoundError:
+                print(f"Error: The file '{filepath}' was not found.")
+                exit()
+            except Exception as e:
+                print(f"Error reading the file: {e}")
+                exit()
+            print(f"Successfully loaded {self.points.shape[0]} points.")
             
-            self.points = [
-                torch.tensor([row['x'], row['y']], **tkwargs)
-                for _, row in df.iterrows()
-            ]
-        except FileNotFoundError:
-            print(f"Error: The file '{filepath}' was not found.")
-            exit()
-        except Exception as e:
-            print(f"Error reading the file: {e}")
-            exit()
-            
+        elif isinstance(source, torch.Tensor):
+            # --- This is the 'brute_force' mode logic ---
+            self.points = source
+            print(f"Initialized ListIteratorSampler with {self.points.shape[0]} points.")
+        
+        else:
+            raise TypeError(f"ListIteratorSampler must be initialized with a filepath (str) or a tensor, not {type(source)}")
+        
         self.index = 0
-        print(f"Successfully loaded {len(self.points)} points.")
+        self.num_points = self.points.shape[0]
+
 
     def get_next_point(self):
         """Returns the next point from the pre-loaded list."""
-        if self.index >= len(self.points):
-            print("Error: Ran out of points to load from the file.")
-            print("Adjust --num_evals or provide a file with more points.")
-            exit()
+        if self.index >= self.num_points:
+            print("Error: (ListIteratorSampler) Ran out of points to evaluate.")
+            return None 
         
         point = self.points[self.index]
         self.index += 1

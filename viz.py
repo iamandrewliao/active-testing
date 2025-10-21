@@ -15,6 +15,8 @@ from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.acquisition.joint_entropy_search import qJointEntropySearch
 from botorch.acquisition.utils import get_optimal_samples
 
+from utils import get_grid_points
+
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
 # Define the search space bounds (hardcoded to match eval.py)
@@ -50,15 +52,6 @@ def _fit_gp_model(train_X, train_Y):
     fit_gpytorch_mll(mll)
     return model
 
-def _get_grid(resolution=20):
-    """Creates a discretized grid for plotting."""
-    x_lin = np.linspace(BOUNDS[0, 0], BOUNDS[1, 0], resolution)
-    y_lin = np.linspace(BOUNDS[0, 1], BOUNDS[1, 1], resolution)
-    grid_x, grid_y = np.meshgrid(x_lin, y_lin)
-    grid_np = np.stack([grid_x, grid_y], axis=-1)
-    grid_tensor = torch.tensor(grid_np, **tkwargs)
-    return grid_tensor, (resolution, resolution)
-
 
 def plot_tested_points(df, output_file):
     """
@@ -91,7 +84,7 @@ def plot_tested_points(df, output_file):
     print("Done.")
 
 
-def plot_active_learning(df, output_file):
+def plot_active_learning(df, output_file, grid_resolution):
     """
     Plots the surrogate model mean and acquisition function landscape
     for an active testing run.
@@ -115,7 +108,8 @@ def plot_active_learning(df, output_file):
     )
     
     # 3. Create grid and evaluate
-    grid_tensor, grid_shape = _get_grid()
+    grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
+    grid_shape = (grid_resolution, grid_resolution)
     
     # Get model predictions
     with torch.no_grad():
@@ -163,7 +157,7 @@ def plot_active_learning(df, output_file):
     print("Done.")
 
 
-def plot_comparison(results_list, gt_df, output_file):
+def plot_comparison(results_list, gt_df, output_file, grid_resolution):
     """
     Generates a plot comparing model errors from one or more runs
     (e.g., Active, IID) against a ground truth model.
@@ -180,7 +174,8 @@ def plot_comparison(results_list, gt_df, output_file):
     print(f"  Fitting Ground Truth model (N={len(X_gt)})...")
     model_gt = _fit_gp_model(X_gt, Y_gt)
 
-    grid_tensor, grid_shape = _get_grid()
+    grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
+    grid_shape = (grid_resolution, grid_resolution)
     with torch.no_grad():
         mean_gt = model_gt.posterior(grid_tensor).mean.numpy().reshape(grid_shape)
 
@@ -258,11 +253,23 @@ def main():
     
     # --- Command: plot-active ---
     parser_active = subparsers.add_parser('plot-active', help='Plot active learning diagnostics (model mean, acqf)')
+    parser_active.add_argument(
+        "--grid_resolution",
+        type=int,
+        default=20,
+        help="The resolution (N) for the N_x_N grid."
+    )    
     parser_active.add_argument('--results_file', type=str, required=True, help='Path to the active_results.csv file')
     parser_active.add_argument('--out', type=str, default='visualizations/active_plots.png', help='Output file path for the plot')
 
     # --- Command: plot-comparison ---
     parser_compare = subparsers.add_parser('plot-comparison', help='Compare model error against ground truth')
+    parser_compare.add_argument(
+        "--grid_resolution",
+        type=int,
+        default=20,
+        help="The resolution (N) for the N_x_N grid."
+    )
     parser_compare.add_argument(
         '--gt', 
         type=str, 
@@ -292,7 +299,7 @@ def main():
         
     elif args.command == 'plot-active':
         df = _load_data(args.results_file)
-        plot_active_learning(df, args.out)
+        plot_active_learning(df, args.out, args.grid_resolution)
         
     elif args.command == 'plot-comparison':
         gt_df = _load_data(args.gt)
@@ -305,7 +312,7 @@ def main():
                 df = _load_data(filepath)
                 model_data_list.append((label, df))
         
-        plot_comparison(model_data_list, gt_df, args.out)
+        plot_comparison(model_data_list, gt_df, args.out, args.grid_resolution)
 
 
 if __name__ == "__main__":

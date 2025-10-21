@@ -3,6 +3,28 @@ import argparse
 
 tkwargs = {"dtype": torch.double, "device": "cpu"}
 
+def get_grid_points(resolution, bounds, tkwargs):
+    """
+    Creates a tensor of all points on a uniform N_x_N grid.
+    
+    Returns:
+        torch.Tensor: A tensor of shape [resolution*resolution, 2]
+    """
+    print(f"Generating {resolution}x{resolution} grid...")
+    x_lin = torch.linspace(bounds[0, 0], bounds[1, 0], resolution, **tkwargs)
+    y_lin = torch.linspace(bounds[0, 1], bounds[1, 1], resolution, **tkwargs)
+    
+    # Use torch.meshgrid
+    grid_y, grid_x = torch.meshgrid(y_lin, x_lin, indexing='ij')
+    
+    # Stack and reshape to get [N*N, 2]
+    grid_tensor = torch.stack([grid_x, grid_y], dim=-1)
+    all_points = grid_tensor.reshape(-1, 2)
+    
+    print(f"Generated {all_points.shape[0]} total grid points.")
+    return all_points
+
+
 def is_valid_point(point):
     """Automatically filters out any point past Lightning's reachability (approximated by a straight line)"""
     # Equation of the boundary line: y = 1.5x - 0.75
@@ -65,9 +87,15 @@ def parse_args():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["iid", "active", "loaded"],
+        choices=["iid", "active", "loaded", "brute_force"],
         required=True,
         help="The sampling strategy to use."
+    )
+    parser.add_argument(
+        "--grid_resolution",
+        type=int,
+        default=20,
+        help="The resolution (N) for the N_x_N grid in 'brute_force' or 'iid' mode."
     )
     parser.add_argument(
         "--num_evals",
