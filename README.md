@@ -4,7 +4,15 @@
 
 Example run command:
 ```
-uv run eval.py --mode iid --num_evals 100 --output_file iid_100_results.csv --save_points iid_100_points.csv
+uv run eval.py --mode iid --num_evals 50 --output_file results/iid_50_results.csv --save_points points/iid_50_points.csv
+```
+- [./viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
+
+Example run commands:
+```
+uv run viz.py plot-points --results_file results/iid_50_results.csv --out visualizations/iid_points.png
+uv run viz.py plot-active --results_file results/active_50_results.csv --out visualizations/active_plots.png
+uv run viz.py plot-comparison --gt results/brute_force_100_results.csv --model Active results/active_50_results.csv --model IID results/iid_50_results.csv
 ```
 - [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
 
