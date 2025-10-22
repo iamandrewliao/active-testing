@@ -89,7 +89,7 @@ def plot_active_learning(df, output_file, grid_resolution):
     Plots the surrogate model mean and acquisition function landscape
     for an active testing run.
     """
-    print(f"Generating active learning plots -> {output_file}_*...")
+    print(f"Generating active learning plots -> {output_file}...")
     
     # 1. Fit the model
     train_X, train_Y = _get_tensors_from_df(df)

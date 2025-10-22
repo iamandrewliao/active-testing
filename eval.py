@@ -107,7 +107,7 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, grid_points)
+            sampler = ActiveTester(train_X, train_Y, bounds, grid_points)
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
             sampler = IIDSampler(grid_points)
@@ -131,7 +131,7 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, grid_points)
+            sampler = ActiveTester(train_X, train_Y, bounds, grid_points)
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
         
