@@ -3,6 +3,7 @@ Main script for robot policy evaluation.
 '''
 import pandas as pd
 import torch
+import math
 from samplers import ActiveTester, IIDSampler, ListIteratorSampler
 
 from utils import is_valid_point, run_evaluation, parse_args, get_grid_points
@@ -12,6 +13,9 @@ tkwargs = {"dtype": torch.double, "device": "cpu"}
 
 def main(args):
     """Main execution loop."""
+    if not math.sqrt(args.num_evals).is_integer():
+        raise ValueError("num_evals must be a perfect square for grid generation.")
+    
     print(f"Starting evaluation with mode: '{args.mode}' for {args.num_evals} trials.")
     
     # Define the search space bounds for our factors [x, y]
@@ -20,9 +24,25 @@ def main(args):
     # --- Generate discrete grid points (if needed) ---
     # This grid is now used by 'iid' and 'brute_force' modes,
     # and for the initial points in 'active' mode.
+# --- Generate discrete grid points (if needed) ---
+    # This grid is now used by 'iid' and 'brute_force' modes,
+    # and for the initial points in 'active' mode.
     grid_points = None
     if args.mode in ['iid', 'brute_force', 'active']:
-        grid_points = get_grid_points(args.grid_resolution, bounds, tkwargs)
+        all_grid_points = get_grid_points(int(math.sqrt(args.num_evals)), bounds, tkwargs)
+        
+        # --- Filter grid points based on validity ---
+        print("Filtering grid points using is_valid_point()...")
+        valid_points_list = [p for p in all_grid_points if is_valid_point(p)]
+        
+        if not valid_points_list:
+            print(f"Error: No valid points found in the {args.grid_resolution}x{args.grid_resolution} grid.")
+            print("Check your 'is_valid_point' function or increase --grid_resolution.")
+            exit()
+            
+        grid_points = torch.stack(valid_points_list)
+        print(f"Filtered grid from {all_grid_points.shape[0]} total points to {grid_points.shape[0]} valid points.")
+        # --- End of filtering ---
 
     results_data = []
     loop_start_index = 0
