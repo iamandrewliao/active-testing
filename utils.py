@@ -26,11 +26,11 @@ def get_grid_points(resolution, bounds, tkwargs):
 
 def is_valid_point(point):
     """Automatically filters out any point past Lightning's reachability (approximated by a straight line)"""
-    # Equation of the boundary line: y = 1.5x - 0.75
+    # Equation of the boundary line: y = 1.35x - 0.475
     # A point is 'invalid' if it's on the right side of the line
     x, y = point[0].item(), point[1].item()
     # Calculate if the point is in the invalid region
-    is_invalid = (y <= 1.5*x - 0.75) and (x >= 0.5)
+    is_invalid = (y <= 1.35*x - 0.475) and (x >= 0.35)
     
     return not is_invalid  # Return True if the point is valid
 
