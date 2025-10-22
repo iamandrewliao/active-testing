@@ -2,17 +2,19 @@
 ## Key files
 - [./eval.py](./eval.py): Main evaluation script, run alongside robot policy deployment
 
-Example run command:
+Example run commands:
 ```
-uv run eval.py --mode iid --num_evals 50 --output_file results/iid_50_results.csv --save_points points/iid_50_points.csv
+uv run eval.py --mode brute_force --output_file results/bf_results.csv --save_points points/bf_points.csv --grid_resolution 11
+uv run eval.py --mode iid --num_evals 50 --output_file results/iid_results.csv --save_points points/iid_points.csv
+uv run eval.py --mode active --num_evals 50 --output_file results/active_results.csv --save_points points/active_points.csv --grid_resolution 11
 ```
 - [./viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
 
 Example run commands:
 ```
-uv run viz.py plot-points --results_file results/iid_50_results.csv --out visualizations/iid_points.png
-uv run viz.py plot-active --grid-resolution 20 --results_file results/active_50_results.csv --out visualizations/active_plots.png
-uv run viz.py plot-comparison --grid-resolution 20 --gt results/brute_force_100_results.csv --model Active results/active_50_results.csv --model IID results/iid_50_results.csv
+uv run viz.py plot-points --results_file results/iid_results.csv --output_file visualizations/iid_points.png
+uv run viz.py plot-active --grid_resolution 20 --results_file results/active_results.csv --output_file visualizations/active_plots.png
+uv run viz.py plot-comparison --grid_resolution 20 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
 ```
 - [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
 

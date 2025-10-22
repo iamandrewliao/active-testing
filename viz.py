@@ -249,25 +249,25 @@ def main():
     # --- Command: plot-points ---
     parser_points = subparsers.add_parser('plot-points', help='Plot tested points colored by outcome')
     parser_points.add_argument('--results_file', type=str, required=True, help='Path to the evaluation_results.csv file')
-    parser_points.add_argument('--out', type=str, default='visualizations/tested_points.png', help='Output file path for the plot')
+    parser_points.add_argument('--output_file', type=str, default='visualizations/tested_points.png', help='Output file path for the plot')
     
     # --- Command: plot-active ---
     parser_active = subparsers.add_parser('plot-active', help='Plot active learning diagnostics (model mean, acqf)')
     parser_active.add_argument(
         "--grid_resolution",
         type=int,
-        default=20,
+        default=10,
         help="The resolution (N) for the N_x_N grid."
     )    
     parser_active.add_argument('--results_file', type=str, required=True, help='Path to the active_results.csv file')
-    parser_active.add_argument('--out', type=str, default='visualizations/active_plots.png', help='Output file path for the plot')
+    parser_active.add_argument('--output_file', type=str, default='visualizations/active_plots.png', help='Output file path for the plot')
 
     # --- Command: plot-comparison ---
     parser_compare = subparsers.add_parser('plot-comparison', help='Compare model error against ground truth')
     parser_compare.add_argument(
         "--grid_resolution",
         type=int,
-        default=20,
+        default=10,
         help="The resolution (N) for the N_x_N grid."
     )
     parser_compare.add_argument(
@@ -284,7 +284,7 @@ def main():
         help='Add a model to compare. Can be used multiple times. E.g., --model Active active.csv'
     )
     parser_compare.add_argument(
-        '--out', 
+        '--output_file', 
         type=str, 
         default='visualizations/comparison_plot.png', 
         help='Output file path for the plot'
@@ -295,24 +295,24 @@ def main():
     # --- Execute the chosen command ---
     if args.command == 'plot-points':
         df = _load_data(args.results_file)
-        plot_tested_points(df, args.out)
+        plot_tested_points(df, args.output_file)
         
     elif args.command == 'plot-active':
         df = _load_data(args.results_file)
-        plot_active_learning(df, args.out, args.grid_resolution)
+        plot_active_learning(df, args.output_file, args.grid_resolution)
         
     elif args.command == 'plot-comparison':
         gt_df = _load_data(args.gt)
         
-        model_data_list = []
+        results_list = []
         if not args.model:
             print("Warning: No --model files provided. Only plotting the Ground Truth model.")
         else:
             for label, filepath in args.model:
                 df = _load_data(filepath)
-                model_data_list.append((label, df))
+                results_list.append((label, df))
         
-        plot_comparison(model_data_list, gt_df, args.out, args.grid_resolution)
+        plot_comparison(results_list, gt_df, args.output_file, args.grid_resolution)
 
 
 if __name__ == "__main__":

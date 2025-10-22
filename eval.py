@@ -13,26 +13,19 @@ tkwargs = {"dtype": torch.double, "device": "cpu"}
 
 def main(args):
     """Main execution loop."""
-    if not math.sqrt(args.num_evals).is_integer():
-        raise ValueError("num_evals must be a perfect square for grid generation.")
-    
-    print(f"Starting evaluation with mode: '{args.mode}' for {args.num_evals} trials.")
-    
+    if args.mode == 'brute_force' and args.num_evals:
+        print("Note: --num_evals is ignored in 'brute_force' mode; evaluating all grid points instead.")
     # Define the search space bounds for our factors [x, y]
     bounds = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
     
     # --- Generate discrete grid points (if needed) ---
-    # This grid is now used by 'iid' and 'brute_force' modes,
-    # and for the initial points in 'active' mode.
-# --- Generate discrete grid points (if needed) ---
-    # This grid is now used by 'iid' and 'brute_force' modes,
-    # and for the initial points in 'active' mode.
+    # This grid is used by 'iid', 'brute_force', and 'active' modes.
     grid_points = None
     if args.mode in ['iid', 'brute_force', 'active']:
-        all_grid_points = get_grid_points(int(math.sqrt(args.num_evals)), bounds, tkwargs)
+        # 1. Generate the full grid based on --grid_resolution
+        all_grid_points = get_grid_points(args.grid_resolution, bounds, tkwargs)
         
-        # --- Filter grid points based on validity ---
-        print("Filtering grid points using is_valid_point()...")
+        # 2. Filter the grid to get the valid "brute-force" pool
         valid_points_list = [p for p in all_grid_points if is_valid_point(p)]
         
         if not valid_points_list:
@@ -41,8 +34,19 @@ def main(args):
             exit()
             
         grid_points = torch.stack(valid_points_list)
-        print(f"Filtered grid from {all_grid_points.shape[0]} total points to {grid_points.shape[0]} valid points.")
-        # --- End of filtering ---
+        pool_size = grid_points.shape[0]
+        print(f"Filtered grid from {all_grid_points.shape[0]} total points to {pool_size} valid points (this is the 'brute-force' pool).")
+
+        # 3. Set or check num_evals based on the mode
+        if args.mode == 'brute_force':
+            print(f"Setting num_evals to the full pool size: {pool_size} (brute force mode).")
+            args.num_evals = pool_size
+        elif args.mode in ['active', 'iid']:
+            print(f"{args.mode} mode: Running {args.num_evals} trials, sampling from the {pool_size}-point pool.")
+            if args.num_evals > pool_size:
+                print(f"Error: num_evals ({args.num_evals}) cannot be larger than the valid point pool size ({pool_size}).")
+                print("Increase --grid_resolution or decrease --num_evals.")
+                exit()
 
     results_data = []
     loop_start_index = 0
@@ -64,7 +68,6 @@ def main(args):
             loop_start_index = 0
     
     if loop_start_index >= args.num_evals and args.mode not in ['loaded', 'brute_force']:
-        # (Slight change: don't exit if brute_force)
         print(f"Evaluation already complete with {loop_start_index} trials. Exiting.")
         return
 
@@ -81,10 +84,10 @@ def main(args):
             print("All points from the loaded file have already been evaluated. Exiting.")
             return
         
-        print(f"Running evaluation for {args.num_evals - loop_start_index} remaining loaded points.")
+        print(f"⏯️  Running evaluation for {args.num_evals - loop_start_index} remaining loaded points.")
     elif args.mode == 'brute_force':
         sampler = ListIteratorSampler(grid_points)
-        args.num_evals = len(sampler.points)  # Override num_evals
+
         if loop_start_index > 0:
             print(f"Skipping the first {loop_start_index} points from the grid.")
             sampler.index = loop_start_index
@@ -93,7 +96,7 @@ def main(args):
             print("All grid points have already been evaluated. Exiting.")
             return
         
-        print(f"Running evaluation for {args.num_evals - loop_start_index} remaining grid points.")
+        print(f"⏯️  Running evaluation for {args.num_evals - loop_start_index} remaining grid points.")
     elif args.mode == 'iid':
         sampler = IIDSampler(grid_points)
         
@@ -111,6 +114,7 @@ def main(args):
 
     # --- Main Evaluation Loop ---
     print(f"\n--- Starting main evaluation loop ---")
+    print(f"Total trials: {args.num_evals}, Resuming from trial: {loop_start_index + 1}")
     for i in range(loop_start_index, args.num_evals):
         
         current_mode = args.mode

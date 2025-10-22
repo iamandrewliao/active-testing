@@ -10,7 +10,6 @@ def get_grid_points(resolution, bounds, tkwargs):
     Returns:
         torch.Tensor: A tensor of shape [resolution*resolution, 2]
     """
-    print(f"Generating {resolution}x{resolution} grid...")
     x_lin = torch.linspace(bounds[0, 0], bounds[1, 0], resolution, **tkwargs)
     y_lin = torch.linspace(bounds[0, 1], bounds[1, 1], resolution, **tkwargs)
     
@@ -21,7 +20,7 @@ def get_grid_points(resolution, bounds, tkwargs):
     grid_tensor = torch.stack([grid_x, grid_y], dim=-1)
     all_points = grid_tensor.reshape(-1, 2)
     
-    print(f"Generated {all_points.shape[0]} total grid points.")
+    print(f"Generated {all_points.shape[0]} total grid points ({resolution}x{resolution}).")
     return all_points
 
 
@@ -94,7 +93,7 @@ def parse_args():
     parser.add_argument(
         "--grid_resolution",
         type=int,
-        default=20,
+        default=10,
         help="The resolution (N) for the N_x_N grid in 'brute_force' or 'iid' mode."
     )
     parser.add_argument(

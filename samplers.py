@@ -105,7 +105,7 @@ class IIDSampler:
     def __init__(self, grid_points_tensor):
         self.grid_points = grid_points_tensor
         self.num_points = self.grid_points.shape[0]
-        print(f"Initialized IIDSampler with {self.num_points} discrete points.")
+        # print(f"Initialized IIDSampler with {self.num_points} discrete points.")
 
     def get_next_point(self):
         """Generates a new point by sampling uniformly from the grid."""
@@ -150,7 +150,7 @@ class ListIteratorSampler:
         elif isinstance(source, torch.Tensor):
             # --- This is the 'brute_force' mode logic ---
             self.points = source
-            print(f"Initialized ListIteratorSampler with {self.points.shape[0]} points.")
+            # print(f"Initialized ListIteratorSampler with {self.points.shape[0]} points.")
         
         else:
             raise TypeError(f"ListIteratorSampler must be initialized with a filepath (str) or a tensor, not {type(source)}")
