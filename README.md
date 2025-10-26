@@ -13,9 +13,11 @@ uv run eval.py --mode active --num_evals 50 --output_file results/active_results
 Example run commands:
 ```
 uv run viz.py plot-points --results_file results/iid_results.csv --output_file visualizations/iid_points.png
-uv run viz.py plot-active --grid_resolution 20 --results_file results/active_results.csv --output_file visualizations/active_plots.png
-uv run viz.py plot-comparison --grid_resolution 20 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
+uv run viz.py plot-active --grid_resolution 10 --results_file results/active_results.csv --output_file visualizations/active_plots.png
+uv run viz.py animate-active --results_file results/active_results.csv --output_file visualizations/active_animation.mp4 --grid_resolution 10 --interval 750
+uv run viz.py plot-comparison --grid_resolution 10 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
 ```
+**Note:** The grid_resolution if viz.py should be a multiple of 10 whereas the grid_resolution used for eval.py should be a multiple of 11.
 - [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
 
 **Running Jupyter Notebook in VSCode within this uv project:**  
