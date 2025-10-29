@@ -4,9 +4,10 @@
 
 Example run commands:
 ```
-uv run eval.py --mode brute_force --output_file results/bf_results.csv --save_points points/bf_points.csv --grid_resolution 11
+uv run eval.py --mode brute_force --num_evals 100 --output_file results/bf_results.csv --save_points points/bf_points.csv --grid_resolution 11
 uv run eval.py --mode iid --num_evals 50 --output_file results/iid_results.csv --save_points points/iid_points.csv --grid_resolution 11
 uv run eval.py --mode active --num_evals 50 --output_file results/active_results.csv --save_points points/active_points.csv --grid_resolution 11
+uv run eval.py --mode loaded --load_path points/policyA_bf_points.csv --output_file results/policyB_bf_results.csv
 ```
 - [./viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
 
