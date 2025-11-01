@@ -30,8 +30,8 @@ def is_valid_point(point):
     # A point is 'invalid' if it's on the right side of the line
     x, y = point[0].item(), point[1].item()
     # Calculate if the point is in the invalid region
-    # is_invalid = (y <= 1.35*x - 0.475) and (x >= 0.35)
-    is_invalid = (y <= 1.5*x - 0.75) and (x >= 0.5)
+    is_invalid = (y <= 1.35*x - 0.475) and (x >= 0.35)
+    # is_invalid = (y <= 1.5*x - 0.75) and (x >= 0.5)
     
     return not is_invalid  # Return True if the point is valid
 

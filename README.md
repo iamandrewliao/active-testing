@@ -19,7 +19,7 @@ uv run viz.py animate-active --results_file results/active_results.csv --output_
 uv run viz.py plot-comparison --grid_resolution 10 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
 ```
 **Note:** The grid_resolution if viz.py should be a multiple of 10 whereas the grid_resolution used for eval.py should be a multiple of 11. (TO DO: fix this; points should be in the center of grids)
-- [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next.
+- [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods (to be developed))
 - [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
 
 **Running Jupyter Notebook in VSCode within this uv project:**  

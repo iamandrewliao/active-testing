@@ -4,7 +4,8 @@ Based on active testing results, determine what data to collect next.
 
 import pandas as pd
 import torch
-from viz import _load_data, _get_tensors_from_df, _fit_gp_model, get_grid_points
+from viz import _load_data, _get_tensors_from_df, _fit_gp_model
+from utils import get_grid_points, is_valid_point
 
 
 # --- Define Constants ---
@@ -40,6 +41,15 @@ def find_certain_failures(results_file, grid_resolution, failure_pct, certainty_
     print(f"Generating {grid_resolution}x{grid_resolution} analysis grid...")
     grid_points = get_grid_points(grid_resolution, BOUNDS, tkwargs)
 
+    print("Checking grid point validity...")
+    # We check all points on the grid for validity
+    valid_mask = torch.tensor(
+        [is_valid_point(p) for p in grid_points], 
+        dtype=torch.bool, 
+        device=tkwargs["device"]
+    )
+    print(f"Found {valid_mask.sum()} valid points out of {len(grid_points)} total grid points.")
+
     # 4. Get model predictions on the grid
     print("Getting model predictions on the grid...")
     with torch.no_grad():
@@ -57,14 +67,14 @@ def find_certain_failures(results_file, grid_resolution, failure_pct, certainty_
     is_certain = variance_preds < certainty_threshold
     
     # Combine masks
-    is_certain_failure = is_failure & is_certain
+    is_certain_failure_and_valid = is_failure & is_certain & valid_mask
     
     # Get the grid points that satisfy the condition
-    certain_failure_points = grid_points[is_certain_failure]
+    certain_failure_points = grid_points[is_certain_failure_and_valid]
     
     # Also get the corresponding predictions for verification
-    certain_failure_means = mean_preds[is_certain_failure]
-    certain_failure_vars = variance_preds[is_certain_failure]
+    certain_failure_means = mean_preds[is_certain_failure_and_valid]
+    certain_failure_vars = variance_preds[is_certain_failure_and_valid]
 
     # 6. Print results
     print("\n--- Results ---")
