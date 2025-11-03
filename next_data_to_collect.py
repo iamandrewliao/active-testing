@@ -2,7 +2,6 @@
 Based on active testing results, determine what data to collect next.
 '''
 
-import pandas as pd
 import torch
 from viz import _load_data, _get_tensors_from_df, _fit_gp_model
 from utils import get_grid_points, is_valid_point
@@ -13,7 +12,7 @@ tkwargs = {"dtype": torch.double, "device": "cpu"}
 # Define the search space bounds (hardcoded from viz.py)
 BOUNDS = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
 
-def find_certain_failures(results_file, grid_resolution, failure_pct, certainty_pct):
+def find_certain_failures(results_file, grid_resolution, mean_pct, variance_pct):
     """
     Finds points on a grid where the surrogate model, trained on
     results_file, predicts failure with high certainty.
@@ -21,8 +20,8 @@ def find_certain_failures(results_file, grid_resolution, failure_pct, certainty_
     Args:
         results_file (str): Path to the active testing results CSV.
         grid_resolution (int): The N for the N_x_N grid.
-        failure_pct (float): Predicted mean outcome in this percentile is a "failure".
-        certainty_pct (float): Predicted variance in this percentile is "certain".
+        mean_pct (float): Predicted mean outcome in this percentile is a "failure".
+        variance_pct (float): Predicted variance in this percentile is "certain".
     """
     
     # 1. Load data
@@ -58,13 +57,13 @@ def find_certain_failures(results_file, grid_resolution, failure_pct, certainty_
         variance_preds = posterior.variance.squeeze()
 
     # 5. Filter for certain failures
-    failure_threshold = torch.quantile(mean_preds, failure_pct)
-    certainty_threshold = torch.quantile(variance_preds, certainty_pct)
-    print(f"Filtering points where mean < {failure_threshold} and variance < {certainty_threshold}...")
+    mean_threshold = torch.quantile(mean_preds, mean_pct)
+    var_threshold = torch.quantile(variance_preds, variance_pct)
+    print(f"Filtering points where mean < {mean_threshold} and variance < {var_threshold}...")
     
     # Create boolean masks
-    is_failure = mean_preds < failure_threshold
-    is_certain = variance_preds < certainty_threshold
+    is_failure = mean_preds < mean_threshold
+    is_certain = variance_preds < var_threshold
     
     # Combine masks
     is_certain_failure_and_valid = is_failure & is_certain & valid_mask
@@ -102,12 +101,12 @@ if __name__ == "__main__":
 
     # Collect data for predictions with low variance and low mean outcomes (bottom n %)
     # 0.05 is a good starting point (std dev ~0.22)
-    FAILURE_MEAN_PERCENTILE = 0.5
-    CERTAINTY_VAR_PERCENTILE = 0.5
+    OUTCOME_MEAN_PERCENTILE = 0.7
+    OUTCOME_VAR_PERCENTILE = 0.5
 
     find_certain_failures(
         results_file=RESULTS_FILE_PATH,
         grid_resolution=GRID_RESOLUTION,
-        failure_pct=FAILURE_MEAN_PERCENTILE,
-        certainty_pct=CERTAINTY_VAR_PERCENTILE
+        mean_pct=OUTCOME_MEAN_PERCENTILE,
+        variance_pct=OUTCOME_VAR_PERCENTILE
     )
