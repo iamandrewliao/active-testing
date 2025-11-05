@@ -106,6 +106,11 @@ def plot_active_learning(df, output_file, grid_resolution):
     if train_X.shape[0] < 1:
         print("Error: No data points found in the results file. Cannot generate plots.")
         return
+    # Set seed for deterministic 'get_optimal_samples'
+    # Use the number of data points as the seed
+    if train_X.shape[0] >= 2: # Only needed if we call JES
+        torch.manual_seed(train_X.shape[0])
+        print(f"Using seed {train_X.shape[0]}")
     model = _fit_gp_model(train_X, train_Y)
 
     # 2. Get the acquisition function (JES)
@@ -304,6 +309,10 @@ def animate_active_learning(df, output_file, grid_resolution, interval=500):
         # Initialize plots with NaN
         mean_values_flat = np.full(grid_tensor.shape[0], np.nan)
         acq_values_flat = np.full(grid_tensor.shape[0], np.nan)
+        # Set seed based on 't' (the number of points used for fitting) to match eval.py
+        if train_X.shape[0] >= 1: # Always set seed before fitting
+            torch.manual_seed(t)
+            print(f"Using seed {t}")
         # Fit model on data 1...t
         model = _fit_gp_model(train_X, train_Y)
         with torch.no_grad():

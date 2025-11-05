@@ -134,6 +134,13 @@ def main(args):
             sampler = ActiveTester(train_X, train_Y, bounds, grid_points)
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
+
+        # We seed based on 'i' (the number of points currently in the dataset)
+        # to ensure the stochastic 'get_optimal_samples' in ActiveTester
+        # behaves identically here and in the visualization script.
+        if current_mode == 'active':
+            torch.manual_seed(i)
+            print(f"Using seed {i}")
         
         point = sampler.get_next_point()
         
