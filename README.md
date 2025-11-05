@@ -14,11 +14,11 @@ uv run eval.py --mode loaded --load_path points/policyA_bf_points.csv --output_f
 Example run commands:
 ```
 uv run viz.py plot-points --results_file results/iid_results.csv --output_file visualizations/iid_points.png
-uv run viz.py plot-active --grid_resolution 10 --results_file results/active_results.csv --output_file visualizations/active_plots.png
-uv run viz.py animate-active --results_file results/active_results.csv --output_file visualizations/active_animation.mp4 --grid_resolution 10 --interval 750
-uv run viz.py plot-comparison --grid_resolution 10 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
+uv run viz.py plot-active --grid_resolution 11 --results_file results/active_results.csv --output_file visualizations/active_plots.png
+uv run viz.py animate-active --results_file results/active_results.csv --output_file visualizations/active_animation.mp4 --grid_resolution 11 --interval 750
+uv run viz.py plot-comparison --grid_resolution 11 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
 ```
-**Note:** The grid_resolution if viz.py should be a multiple of 10 whereas the grid_resolution used for eval.py should be a multiple of 11. (TO DO: fix this; points should be in the center of grids)
+**Note:** The grid_resolution should be a multiple of the resolution used during eval (but not necessary).
 - [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods (to be developed))
 - [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
 
