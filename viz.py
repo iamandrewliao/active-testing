@@ -16,7 +16,7 @@ from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.acquisition.joint_entropy_search import qJointEntropySearch
 from botorch.acquisition.utils import get_optimal_samples
 
-from utils import get_grid_points, is_valid_point
+from utils import get_grid_points, is_valid_point, fit_surrogate_model
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
@@ -41,26 +41,26 @@ def _get_tensors_from_df(df):
     train_Y = torch.tensor(df['continuous_outcome'].values, **tkwargs).unsqueeze(-1) # Shape [N, 1]
     return train_X, train_Y
 
-def _fit_gp_model(train_X, train_Y):
-    """Fits a SingleTaskGP to the provided data."""
-    # Need at least 2 points to fit outcome transform reliably
-    if train_X.shape[0] < 2:
-        # Fit without outcome transform if only 1 point
-        model = SingleTaskGP(
-            train_X=train_X,
-            train_Y=train_Y,
-            input_transform=Normalize(d=train_X.shape[-1], bounds=BOUNDS),
-        )
-    else:
-        model = SingleTaskGP(
-            train_X=train_X,
-            train_Y=train_Y,
-            input_transform=Normalize(d=train_X.shape[-1], bounds=BOUNDS),
-            outcome_transform=Standardize(m=1), # Standardize Y
-        )
-    mll = ExactMarginalLogLikelihood(model.likelihood, model)
-    fit_gpytorch_mll(mll)
-    return model
+# def _fit_gp_model(train_X, train_Y):
+#     """Fits a SingleTaskGP to the provided data."""
+#     # Need at least 2 points to fit outcome transform reliably
+#     if train_X.shape[0] < 2:
+#         # Fit without outcome transform if only 1 point
+#         model = SingleTaskGP(
+#             train_X=train_X,
+#             train_Y=train_Y,
+#             input_transform=Normalize(d=train_X.shape[-1], bounds=BOUNDS),
+#         )
+#     else:
+#         model = SingleTaskGP(
+#             train_X=train_X,
+#             train_Y=train_Y,
+#             input_transform=Normalize(d=train_X.shape[-1], bounds=BOUNDS),
+#             outcome_transform=Standardize(m=1), # Standardize Y
+#         )
+#     mll = ExactMarginalLogLikelihood(model.likelihood, model)
+#     fit_gpytorch_mll(mll)
+#     return model
 
 
 def plot_tested_points(df, output_file):
@@ -111,7 +111,7 @@ def plot_active_learning(df, output_file, grid_resolution):
     if train_X.shape[0] >= 2: # Only needed if we call JES
         torch.manual_seed(train_X.shape[0])
         print(f"Using seed {train_X.shape[0]}")
-    model = _fit_gp_model(train_X, train_Y)
+    model = fit_surrogate_model(train_X, train_Y, BOUNDS)
 
     # 2. Get the acquisition function (JES)
     normalized_bounds = torch.tensor([[0.0] * 2, [1.0] * 2], **tkwargs) # Bounds for normalized space
@@ -314,7 +314,7 @@ def animate_active_learning(df, output_file, grid_resolution, interval=500):
             torch.manual_seed(t)
             print(f"Using seed {t}")
         # Fit model on data 1...t
-        model = _fit_gp_model(train_X, train_Y)
+        model = fit_surrogate_model(train_X, train_Y, BOUNDS)
         with torch.no_grad():
             posterior = model.posterior(grid_tensor)
             mean_values_flat = posterior.mean.numpy()
@@ -371,7 +371,7 @@ def animate_active_learning(df, output_file, grid_resolution, interval=500):
         axes[0].set_title(f'Surrogate Model (GP Mean) (State at N={t})')
         axes[1].set_title(f'Acquisition Function (JES) (Mode: {current_mode})')
     
-        fig.suptitle(f'Active Testing: State at {t}, Predicting Trial {t+1} (Out of {total_trials})', fontsize=16, y=0.95)
+        fig.suptitle(f'Active Testing: State at Trial {t}, Predicting Trial {t+1} (Out of {total_trials})', fontsize=16, y=0.95)
     
         return [im_mean, sc_mean, sc_next_mean, im_acq, sc_acq, sc_next_acq]
     
@@ -408,7 +408,7 @@ def plot_comparison(results_list, gt_df, output_file, grid_resolution):
     if len(X_gt) < 1:
          print("Error: Ground truth data is empty. Cannot generate comparison plot.")
          return
-    model_gt = _fit_gp_model(X_gt, Y_gt)
+    model_gt = fit_surrogate_model(X_gt, Y_gt, BOUNDS)
 
     with torch.no_grad():
         # --- Apply mask to GT mean ---
@@ -424,7 +424,7 @@ def plot_comparison(results_list, gt_df, output_file, grid_resolution):
             print(f"  Skipping {label} model (N=0).")
             continue
         print(f"  Fitting {label} model (N={len(X_model)})...")
-        model = _fit_gp_model(X_model, Y_model)
+        model = fit_surrogate_model(X_model, Y_model, BOUNDS)
 
         with torch.no_grad():
             # --- Apply mask to model mean ---

@@ -16,14 +16,14 @@ def main(args):
     if args.mode == 'brute_force' and args.num_evals:
         print("Note: --num_evals is ignored in 'brute_force' mode; evaluating all grid points instead.")
     # Define the search space bounds for our factors [x, y]
-    bounds = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
+    BOUNDS = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
     
     # --- Generate discrete grid points (if needed) ---
     # This grid is used by 'iid', 'brute_force', and 'active' modes.
     grid_points = None
     if args.mode in ['iid', 'brute_force', 'active']:
         # 1. Generate the full grid based on --grid_resolution
-        all_grid_points = get_grid_points(args.grid_resolution, bounds, tkwargs)
+        all_grid_points = get_grid_points(args.grid_resolution, BOUNDS, tkwargs)
         
         # 2. Filter the grid to get the valid "brute-force" pool
         valid_points_list = [p for p in all_grid_points if is_valid_point(p)]
@@ -107,7 +107,7 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, bounds, grid_points)
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points)
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
             sampler = IIDSampler(grid_points)
@@ -131,7 +131,7 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, bounds, grid_points)
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points)
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
 
@@ -188,7 +188,7 @@ def main(args):
 
     print("\nEvaluation complete.")
 
-    # --- Save Generated Points if Requested ---
+    # --- Save generated points if requested ---
     if args.save_points:
         final_df = pd.DataFrame(results_data)
         points_df = final_df[['x', 'y']]

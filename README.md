@@ -20,20 +20,7 @@ uv run viz.py plot-comparison --grid_resolution 11 --gt results/bf_results.csv -
 ```
 **Note:** The grid_resolution should be a multiple of the resolution used during eval (but not necessary).
 - [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods (to be developed))
-- [./demo_eval.ipynb](./demo_eval.ipynb): Play around with active testing (BoTorch), visualize results (TODO)
-
-**Running Jupyter Notebook in VSCode within this uv project:**  
-Locally (not on a server):  
-1. See https://docs.astral.sh/uv/guides/integration/jupyter/#using-jupyter-from-vs-code  
-
-On a server:
-1. Make sure ipykernel is installed.
 ```
-uv pip install ipykernel
+uv run next_data_to_collect.py
 ```
-2. Run this code to create a dedicated kernel spec that points to your uv environment.
-```
-uv run python -m ipykernel install --user --name={choose a name}
-```
-3. Reload the VSCode window (in the VSCode Command Palette choose 'Developer: Reload Window'). This will not disrupt ongoing training.
-4. Open your Jupyter Notebook and choose the new kernel you created. 
+- [./test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize results (TODO)

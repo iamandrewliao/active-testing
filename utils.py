@@ -1,7 +1,30 @@
 import torch
 import argparse
 
+from botorch.models.transforms import Normalize, Standardize
+from botorch.models.fully_bayesian import SaasFullyBayesianSingleTaskGP
+from botorch.fit import fit_fully_bayesian_model_nuts
+
 tkwargs = {"dtype": torch.double, "device": "cpu"}
+
+
+def fit_surrogate_model(train_X, train_Y, bounds):
+    """
+    Fits and returns surrogate model.
+    """
+    print(f"Fitting model with {train_X.shape[0]} points...")
+
+    # Use SaasFullyBayesianSingleTaskGP as in samplers.py
+    model = SaasFullyBayesianSingleTaskGP(
+        train_X=train_X,
+        train_Y=train_Y,
+        input_transform=Normalize(d=train_X.shape[-1], bounds=bounds), # normalizes X to [0, 1]^d
+        outcome_transform=Standardize(m=1), # standardizes Y to have zero mean and unit variance
+    )
+    # Fit the model using NUTS (MCMC)
+    fit_fully_bayesian_model_nuts(model)
+    return model
+
 
 def get_grid_points(resolution, bounds, tkwargs):
     """

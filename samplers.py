@@ -17,7 +17,12 @@ from botorch.fit import fit_gpytorch_mll
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.acquisition.joint_entropy_search import qJointEntropySearch
 from botorch.acquisition.utils import get_optimal_samples
+from botorch.models.fully_bayesian import SaasFullyBayesianSingleTaskGP
+from botorch.fit import fit_fully_bayesian_model_nuts
+from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
 from botorch.optim import optimize_acqf, optimize_acqf_discrete
+
+from utils import fit_surrogate_model
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
@@ -32,16 +37,7 @@ class ActiveTester:
 
     def _fit_model(self):
         """Fits a surrogate model to the current training data."""
-        # Note: input_transform normalizes X to [0, 1]^d
-        # outcome_transform standardizes Y to have zero mean and unit variance
-        self.model = SingleTaskGP(
-            train_X=self.train_X,
-            train_Y=self.train_Y,
-            input_transform=Normalize(d=self.train_X.shape[-1], bounds=self.bounds),
-            outcome_transform=Standardize(m=1),
-        )
-        mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-        fit_gpytorch_mll(mll)
+        self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds)
 
     def get_next_point(self):
         """
@@ -54,18 +50,19 @@ class ActiveTester:
 
         # 1. Get some Monte Carlo samples of the optimal inputs and outputs to compute the acquisition function (needed by JES)
         # We use normalized bounds [0, 1] because the model normalizes inputs
-        normalized_bounds = torch.tensor([[0.0] * self.bounds.shape[1], [1.0] * self.bounds.shape[1]], **tkwargs)
-        optimal_inputs, optimal_outputs = get_optimal_samples(
-            self.model, bounds=normalized_bounds, num_optima=16
-        )
+        # normalized_bounds = torch.tensor([[0.0] * self.bounds.shape[1], [1.0] * self.bounds.shape[1]], **tkwargs)
+        # optimal_inputs, optimal_outputs = get_optimal_samples(
+        #     self.model, bounds=normalized_bounds, num_optima=16
+        # )
 
         # 2. Construct the acquisition function
-        jes = qJointEntropySearch(
-            model=self.model,
-            optimal_inputs=optimal_inputs,
-            optimal_outputs=optimal_outputs,
-            estimation_type="LB",
-        )
+        # jes = qJointEntropySearch(
+        #     model=self.model,
+        #     optimal_inputs=optimal_inputs,
+        #     optimal_outputs=optimal_outputs,
+        #     estimation_type="LB",
+        # )
+        qbald = qBayesianActiveLearningByDisagreement(model=self.model)
 
         # 3. Optimize the acquisition function (continuous and discrete versions)
         # there is also a mixed version: optimize_acqf_mixed()
@@ -77,15 +74,12 @@ class ActiveTester:
         #     raw_samples=256,
         # )
         candidate, _ = optimize_acqf_discrete(
-            acq_function=jes,
+            acq_function=qbald,
             q=1,
             choices=self.grid_points,
         )
         
-        # Candidate is in the normalized space [0, 1]^d, so we un-normalize it
-        # using the original bounds before returning.
-        unnormalized_candidate = self.bounds[0] + candidate * (self.bounds[1] - self.bounds[0])
-        point = unnormalized_candidate.squeeze(0) # Return a 1D tensor
+        point = candidate.squeeze(0) # Return a 1D tensor
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
