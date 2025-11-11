@@ -11,12 +11,13 @@ import pandas as pd
 import torch
 import time
 
-from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
+from botorch.acquisition.analytic import UpperConfidenceBound
 from botorch.acquisition.active_learning import qNegIntegratedPosteriorVariance
 from botorch.sampling.normal import SobolQMCNormalSampler
+from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
 from botorch.optim import optimize_acqf, optimize_acqf_discrete
 
-from utils import fit_surrogate_model
+from utils import fit_surrogate_model, run_acquisition
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
@@ -32,7 +33,6 @@ class ActiveTester:
             self.mc_points = self.grid_points
         else:
             self.mc_points = mc_points
-        self.acq_func = None
 
     def get_next_point(self):
         """
@@ -41,38 +41,20 @@ class ActiveTester:
         """
         print("Fitting surrogate model")
         start_time = time.time()
+        # For qBALD, but slow
         self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name="SaasFullyBayesianSingleTaskGP")
+        # For qNIPV or UCB, fast
         # self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name="SingleTaskGP")
 
         print("Optimizing acquisition function")
-        # Construct the acquisition function
-        self.acq_func = qBayesianActiveLearningByDisagreement(model=self.model)
-        # self.acq_func = qNegIntegratedPosteriorVariance(
-        #     model=self.model, 
-        #     mc_points=self.mc_points
-        # )
-
-        # Optimize the acquisition function (continuous and discrete versions)
-        # there is also a mixed version: optimize_acqf_mixed()
-        # candidate, _ = optimize_acqf(
-        #     acq_function=jes,
-        #     bounds=normalized_bounds,
-        #     q=1,
-        #     num_restarts=4,
-        #     raw_samples=256,
-        # )
-        candidate, _ = optimize_acqf_discrete(
-            acq_function=self.acq_func,
-            q=1,
-            choices=self.grid_points,
-        )
-        
-        point = candidate.squeeze(0) # Return a 1D tensor
+        # acquired_point = run_acquisition(model=self.model, acq_func_name="UCB", design_space=self.grid_points, discrete=True, mc_points=None)
+        # acquired_point = run_acquisition(model=self.model, acq_func_name="qNIPV", design_space=self.grid_points, discrete=True, mc_points=self.mc_points)
+        acquired_point = run_acquisition(model=self.model, acq_func_name="qBALD", design_space=self.grid_points, discrete=True, mc_points=None)
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
 
-        return point
+        return acquired_point
 
     def update(self, new_x, new_y):
         """Adds a new data point to the training set."""

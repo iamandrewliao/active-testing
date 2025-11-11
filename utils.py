@@ -9,6 +9,12 @@ from botorch.models.transforms import Normalize, Standardize
 from botorch.models.fully_bayesian import SaasFullyBayesianSingleTaskGP
 from botorch.fit import fit_fully_bayesian_model_nuts
 
+from botorch.acquisition.analytic import UpperConfidenceBound
+from botorch.acquisition.active_learning import qNegIntegratedPosteriorVariance
+from botorch.sampling.normal import SobolQMCNormalSampler
+from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
+from botorch.optim import optimize_acqf, optimize_acqf_discrete
+
 from scipy.stats import wasserstein_distance
 
 
@@ -35,6 +41,44 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
         )
         fit_fully_bayesian_model_nuts(model) # Fit the model using NUTS (MCMC)
     return model
+
+
+def run_acquisition(model, acq_func_name, design_space, discrete=True, normalized_bounds=None, mc_points=None):
+    # Define acquisition function
+    if acq_func_name == "UCB":
+        acq_func = UpperConfidenceBound(model=model, beta=1.0)
+    elif acq_func_name == "qNIPV":
+        if mc_points is None:
+             raise ValueError("mc_points must be provided to run_acquisition for qNIPV.")
+        acq_func = qNegIntegratedPosteriorVariance(
+            model=model, 
+            mc_points=mc_points
+        )
+    elif acq_func_name == "qBALD":
+        acq_func = qBayesianActiveLearningByDisagreement(model=model)
+    else:
+        raise ValueError(f"Unknown acq_func_name: {acq_func_name}")
+    
+    # Optimize acquisition function
+    if discrete:
+        candidate, _ = optimize_acqf_discrete(
+            acq_function=acq_func,
+            q=1,
+            choices=design_space,
+        )
+    else:
+        if normalized_bounds is None:
+            raise ValueError("normalized_bounds must be provided for continuous optimization.")
+        candidate, _ = optimize_acqf(
+            acq_function=acq_func,
+            bounds=normalized_bounds,
+            q=1,
+            num_restarts=4,
+            raw_samples=256,
+        )
+    point = candidate.squeeze(0) # Return a 1D tensor
+    return point
+
 
 @torch.no_grad()
 def calculate_rmse(model, X_test, Y_test):

@@ -1,5 +1,7 @@
 # Active testing for robot policy evaluation
 ## Key files
+- [./testers.py](./testers.py): Implements the logic for active testing, iid testing, loading points, etc.
+- [./utils.py](./utils.py): Helper functions
 - [./eval.py](./eval.py): Main evaluation script, run alongside robot policy deployment (TO DO: don't train model in every other script (viz.py, etc.), just use trained model from evaluation)
 
 Example run commands:
@@ -18,7 +20,7 @@ uv run viz.py plot-active --grid_resolution 11 --results_file results/active_res
 uv run viz.py animate-active --results_file results/active_results.csv --output_file visualizations/active_animation.mp4 --grid_resolution 11 --interval 750
 uv run viz.py plot-comparison --grid_resolution 11 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
 ```
-**Note:** The grid_resolution should be a multiple of the resolution used during eval (but not necessary).
+**Note:** The grid_resolution should be a multiple of the resolution used during eval.
 - [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods (to be developed))
 ```
 uv run next_data_to_collect.py
@@ -27,3 +29,4 @@ uv run next_data_to_collect.py
 ```
 uv run test_active.py --save_path ./visualizations/test/sampler_comparison.png
 ```
+**Note:** Make sure to change ActiveTester.get_next_point() in [./testers.py](./testers.py) first

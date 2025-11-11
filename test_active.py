@@ -137,20 +137,20 @@ def compare_results(results_df):
     
     # 1. RMSE Plot (Lower is better)
     sns.lineplot(data=results_df, x='trial', y='rmse', hue='sampler', ax=axes[0])
-    axes[0].set_title('Model RMSE vs. Trials')
-    axes[0].set_ylabel('RMSE (on Test Set)')
+    axes[0].set_title('RMSE (lower is better)')
+    axes[0].set_ylabel('RMSE')
     axes[0].set_xlabel('Trial Number')
 
     # 2. MLL Plot (Higher is better)
     sns.lineplot(data=results_df, x='trial', y='mll', hue='sampler', ax=axes[1])
-    axes[1].set_title('Mean Log-Likelihood vs. Trials')
-    axes[1].set_ylabel('Mean Log-Likelihood (on Test Set)')
+    axes[1].set_title('Mean Test Log-Likelihood (higher is better)')
+    axes[1].set_ylabel('Mean Log-Likelihood')
     axes[1].set_xlabel('Trial Number')
 
     # 3. Wasserstein Plot (Lower is better)
     sns.lineplot(data=results_df, x='trial', y='w_dist', hue='sampler', ax=axes[2])
-    axes[2].set_title('Wasserstein Distance (Y_pred vs Y_true)')
-    axes[2].set_ylabel('Wasserstein-1D Distance')
+    axes[2].set_title('Wasserstein Distance (lower is better)')
+    axes[2].set_ylabel('Wasserstein Distance')
     axes[2].set_xlabel('Trial Number')
     
     plt.suptitle(f'Sampler Comparison (N_init={N_INIT}, N_trials={N_TRIALS})', fontsize=16, y=1.03)
@@ -206,12 +206,14 @@ if __name__ == "__main__":
         "w_dist": wd,
     })
 
-    # Initialize the testers
-    # Sample points "to use for MC-integrating the posterior variance. Usually, these are qMC samples on the whole design space" (required by qNIPV)
-    mc_integration_points = draw_sobol_samples(
-        bounds=BOUNDS, n=128, q=1
-    ).squeeze(1).to(**tkwargs)
-    active_sampler = ActiveTester(X_init, Y_init, BOUNDS, sim_pts, mc_integration_points)
+    # Initialize the testers (CHANGE THIS PART AND TESTERS.PY TO SWITCH ACTIVE TESTING COMPONENTS)
+    # Sample points "to use for MC-integrating the posterior variance. Usually, these are qMC samples on the whole design space"
+    # (required by qNIPV)
+    # mc_points = draw_sobol_samples(
+    #     bounds=BOUNDS, n=128, q=1
+    # ).squeeze(1).to(**tkwargs)
+    # active_sampler = ActiveTester(X_init, Y_init, BOUNDS, sim_pts, mc_points)
+    active_sampler = ActiveTester(X_init, Y_init, BOUNDS, sim_pts)
     iid_sampler = IIDSampler(sim_pts)
 
     # Active test
