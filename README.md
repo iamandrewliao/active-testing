@@ -23,4 +23,7 @@ uv run viz.py plot-comparison --grid_resolution 11 --gt results/bf_results.csv -
 ```
 uv run next_data_to_collect.py
 ```
-- [./test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize results (TODO)
+- [./test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
+```
+uv run test_active.py --save_path ./visualizations/test/sampler_comparison.png
+```

@@ -2,29 +2,88 @@ import torch
 import argparse
 
 from botorch.models.transforms import Normalize, Standardize
+from botorch.models import SingleTaskGP
+from botorch.fit import fit_gpytorch_mll
+from gpytorch.mlls import ExactMarginalLogLikelihood
+from botorch.models.transforms import Normalize, Standardize
 from botorch.models.fully_bayesian import SaasFullyBayesianSingleTaskGP
 from botorch.fit import fit_fully_bayesian_model_nuts
 
-tkwargs = {"dtype": torch.double, "device": "cpu"}
+from scipy.stats import wasserstein_distance
 
 
-def fit_surrogate_model(train_X, train_Y, bounds):
+def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
     """
     Fits and returns surrogate model.
     """
-    print(f"Fitting model with {train_X.shape[0]} points...")
-
-    # Use SaasFullyBayesianSingleTaskGP as in samplers.py
-    model = SaasFullyBayesianSingleTaskGP(
-        train_X=train_X,
-        train_Y=train_Y,
-        input_transform=Normalize(d=train_X.shape[-1], bounds=bounds), # normalizes X to [0, 1]^d
-        outcome_transform=Standardize(m=1), # standardizes Y to have zero mean and unit variance
-    )
-    # Fit the model using NUTS (MCMC)
-    fit_fully_bayesian_model_nuts(model)
+    # print(f"Fitting {model_name} model with {train_X.shape[0]} points...")
+    input_transform = Normalize(d=train_X.shape[-1], bounds=bounds) # normalizes X to [0, 1]^d
+    outcome_transform=Standardize(m=1) # standardizes Y to have zero mean and unit variance
+    if model_name=="SingleTaskGP":
+        model = SingleTaskGP(train_X=train_X, 
+                             train_Y=train_Y,
+                             input_transform=input_transform,
+                             outcome_transform=outcome_transform)
+        mll = ExactMarginalLogLikelihood(likelihood=model.likelihood, model=model)
+        fit_gpytorch_mll(mll)
+    elif model_name=="SaasFullyBayesianSingleTaskGP":
+        model = SaasFullyBayesianSingleTaskGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            input_transform=input_transform,
+            outcome_transform=outcome_transform
+        )
+        fit_fully_bayesian_model_nuts(model) # Fit the model using NUTS (MCMC)
     return model
 
+@torch.no_grad()
+def calculate_rmse(model, X_test, Y_test):
+    """Calculates the Root Mean Squared Error on the test set."""  
+    model.eval()
+    posterior = model.posterior(X_test)
+    mean = posterior.mean.squeeze(-1) # Shape is [N] or [S, N]
+    
+    if mean.ndim == 2: # If it's Bayesian (S, N)
+        mean = mean.mean(dim=0) # Average over samples to get [N]
+    
+    return torch.sqrt(torch.mean((mean - Y_test)**2)).item()
+
+
+@torch.no_grad()
+def calculate_log_likelihood(model, X_test, Y_test):
+    """Calculates the Mean Log-Likelihood (Log Predictive Density) on the test set."""
+    model.eval()
+    posterior = model.posterior(X_test)
+    pred_dist = posterior.distribution
+    
+    # log_prob will be [S, N] for Bayesian, or [N] for SingleTaskGP
+    log_probs = pred_dist.log_prob(Y_test)
+    
+    if log_probs.ndim == 2: # Bayesian case [S, N]
+        # We want log( E[p(y|x)] ) = log( 1/S * sum( exp(log_p(y|x, theta_s)) ) )
+        # This is equivalent to logsumexp(log_p) - log(S)
+        num_samples = log_probs.shape[0]
+        # Average over the N test points
+        mean_log_pred_density = torch.logsumexp(log_probs, dim=0).mean() - torch.log(torch.tensor(num_samples, **tkwargs))
+        return mean_log_pred_density.item()
+    else: # SingleTaskGP case [N]
+        return log_probs.mean().item() # Just average over test points
+
+
+@torch.no_grad()
+def calculate_wasserstein_distance(model, X_test, Y_test):
+    """Calculates the Wasserstein-1D distance between true and predicted Y-distributions."""
+    model.eval()
+    posterior = model.posterior(X_test)
+    mean = posterior.mean.squeeze(-1) # Shape is [N] or [S, N]
+    
+    if mean.ndim == 2: # If it's Bayesian (S, N)
+        mean = mean.mean(dim=0) # Average over samples to get [N]
+    
+    y_true_np = Y_test.cpu().numpy()
+    y_pred_np = mean.cpu().numpy() # No .detach() needed due to decorator
+    
+    return wasserstein_distance(y_true_np, y_pred_np)
 
 def get_grid_points(resolution, bounds, tkwargs):
     """
@@ -102,6 +161,7 @@ def run_evaluation(point, max_steps):
                 print("Invalid input. Please enter a number.")
             
     return binary_outcome, continuous_outcome, steps_taken
+
 
 def parse_args():
     parser = argparse.ArgumentParser(

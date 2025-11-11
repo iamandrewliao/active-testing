@@ -4,7 +4,7 @@ Main script for robot policy evaluation.
 import pandas as pd
 import torch
 import math
-from samplers import ActiveTester, IIDSampler, ListIteratorSampler
+from testers import ActiveTester, IIDSampler, ListIteratorSampler
 
 from utils import is_valid_point, run_evaluation, parse_args, get_grid_points
 import os  # Added for checking file existence

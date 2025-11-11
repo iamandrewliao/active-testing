@@ -11,15 +11,9 @@ import pandas as pd
 import torch
 import time
 
-from botorch.models import SingleTaskGP
-from botorch.models.transforms import Normalize, Standardize
-from botorch.fit import fit_gpytorch_mll
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from botorch.acquisition.joint_entropy_search import qJointEntropySearch
-from botorch.acquisition.utils import get_optimal_samples
-from botorch.models.fully_bayesian import SaasFullyBayesianSingleTaskGP
-from botorch.fit import fit_fully_bayesian_model_nuts
 from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
+from botorch.acquisition.active_learning import qNegIntegratedPosteriorVariance
+from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.optim import optimize_acqf, optimize_acqf_discrete
 
 from utils import fit_surrogate_model
@@ -28,43 +22,37 @@ from utils import fit_surrogate_model
 tkwargs = {"dtype": torch.double, "device": "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, grid_points):
+    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points=None):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
         self.grid_points = grid_points
         self.model = None
-
-    def _fit_model(self):
-        """Fits a surrogate model to the current training data."""
-        self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds)
+        if mc_points is None:
+            self.mc_points = self.grid_points
+        else:
+            self.mc_points = mc_points
+        self.acq_func = None
 
     def get_next_point(self):
         """
         Fits the model and optimizes the acquisition function to find the
         next best point to sample.
         """
-        print("Fitting surrogate model and optimizing acquisition function...")
+        print("Fitting surrogate model")
         start_time = time.time()
-        self._fit_model()
+        self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name="SaasFullyBayesianSingleTaskGP")
+        # self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name="SingleTaskGP")
 
-        # 1. Get some Monte Carlo samples of the optimal inputs and outputs to compute the acquisition function (needed by JES)
-        # We use normalized bounds [0, 1] because the model normalizes inputs
-        # normalized_bounds = torch.tensor([[0.0] * self.bounds.shape[1], [1.0] * self.bounds.shape[1]], **tkwargs)
-        # optimal_inputs, optimal_outputs = get_optimal_samples(
-        #     self.model, bounds=normalized_bounds, num_optima=16
+        print("Optimizing acquisition function")
+        # Construct the acquisition function
+        self.acq_func = qBayesianActiveLearningByDisagreement(model=self.model)
+        # self.acq_func = qNegIntegratedPosteriorVariance(
+        #     model=self.model, 
+        #     mc_points=self.mc_points
         # )
 
-        # 2. Construct the acquisition function
-        # jes = qJointEntropySearch(
-        #     model=self.model,
-        #     optimal_inputs=optimal_inputs,
-        #     optimal_outputs=optimal_outputs,
-        #     estimation_type="LB",
-        # )
-        qbald = qBayesianActiveLearningByDisagreement(model=self.model)
-
-        # 3. Optimize the acquisition function (continuous and discrete versions)
+        # Optimize the acquisition function (continuous and discrete versions)
         # there is also a mixed version: optimize_acqf_mixed()
         # candidate, _ = optimize_acqf(
         #     acq_function=jes,
@@ -74,7 +62,7 @@ class ActiveTester:
         #     raw_samples=256,
         # )
         candidate, _ = optimize_acqf_discrete(
-            acq_function=qbald,
+            acq_function=self.acq_func,
             q=1,
             choices=self.grid_points,
         )
@@ -96,8 +84,8 @@ class IIDSampler:
     """
     A sampler that samples *with replacement* from a discrete grid of points.
     """
-    def __init__(self, grid_points_tensor):
-        self.grid_points = grid_points_tensor
+    def __init__(self, grid_points):
+        self.grid_points = grid_points
         self.num_points = self.grid_points.shape[0]
         # print(f"Initialized IIDSampler with {self.num_points} discrete points.")
 

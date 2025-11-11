@@ -23,7 +23,6 @@ tkwargs = {"dtype": torch.double, "device": "cpu"}
 # Define the search space bounds (hardcoded to match eval.py)
 BOUNDS = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
 
-
 def _load_data(filepath):
     """Loads evaluation data from a CSV file."""
     if not os.path.exists(filepath):
@@ -35,32 +34,12 @@ def _load_data(filepath):
         print(f"Error reading file: {e}")
         exit()
 
+
 def _get_tensors_from_df(df):
     """Extracts and formats training tensors from a DataFrame."""
     train_X = torch.tensor(df[['x', 'y']].values, **tkwargs)
     train_Y = torch.tensor(df['continuous_outcome'].values, **tkwargs).unsqueeze(-1) # Shape [N, 1]
     return train_X, train_Y
-
-# def _fit_gp_model(train_X, train_Y):
-#     """Fits a SingleTaskGP to the provided data."""
-#     # Need at least 2 points to fit outcome transform reliably
-#     if train_X.shape[0] < 2:
-#         # Fit without outcome transform if only 1 point
-#         model = SingleTaskGP(
-#             train_X=train_X,
-#             train_Y=train_Y,
-#             input_transform=Normalize(d=train_X.shape[-1], bounds=BOUNDS),
-#         )
-#     else:
-#         model = SingleTaskGP(
-#             train_X=train_X,
-#             train_Y=train_Y,
-#             input_transform=Normalize(d=train_X.shape[-1], bounds=BOUNDS),
-#             outcome_transform=Standardize(m=1), # Standardize Y
-#         )
-#     mll = ExactMarginalLogLikelihood(model.likelihood, model)
-#     fit_gpytorch_mll(mll)
-#     return model
 
 
 def plot_tested_points(df, output_file):
