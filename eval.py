@@ -139,8 +139,8 @@ def main(args):
         # to ensure the stochastic 'get_optimal_samples' in ActiveTester
         # behaves identically here and in the visualization script.
         if current_mode == 'active':
-            torch.manual_seed(i)
-            print(f"Using seed {i}")
+            torch.manual_seed(i+1)
+            print(f"Using seed {i+1}")
         
         point = sampler.get_next_point()
         
