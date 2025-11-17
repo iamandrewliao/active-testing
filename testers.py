@@ -17,20 +17,23 @@ from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
 from botorch.optim import optimize_acqf, optimize_acqf_discrete
 
-from utils import fit_surrogate_model, run_acquisition
+from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_func
 
 # Set up torch device and data type
-tkwargs = {"dtype": torch.double, "device": "cpu"}
+tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points=None):
+    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points, model_name, acq_func_name):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
         self.grid_points = grid_points
+        self.model_name = model_name
+        self.acq_func_name = acq_func_name
         self.model = None
+        self.acq_func = None
         if mc_points is None:
-            self.mc_points = self.grid_points
+            self.mc_points = self.grid_points # integrate over entire design space (no sampling)
         else:
             self.mc_points = mc_points
 
@@ -39,17 +42,13 @@ class ActiveTester:
         Fits the model and optimizes the acquisition function to find the
         next best point to sample.
         """
-        print("Fitting surrogate model")
+        print(f"Fitting surrogate model {self.model_name}")
         start_time = time.time()
-        # For qBALD, but slow
-        self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name="SaasFullyBayesianSingleTaskGP")
-        # For qNIPV or UCB, fast
-        # self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name="SingleTaskGP")
+        self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name=self.model_name)
 
-        print("Optimizing acquisition function")
-        # acquired_point = run_acquisition(model=self.model, acq_func_name="UCB", design_space=self.grid_points, discrete=True, mc_points=None)
-        # acquired_point = run_acquisition(model=self.model, acq_func_name="qNIPV", design_space=self.grid_points, discrete=True, mc_points=self.mc_points)
-        acquired_point = run_acquisition(model=self.model, acq_func_name="qBALD", design_space=self.grid_points, discrete=True, mc_points=None)
+        print(f"Optimizing acquisition function {self.acq_func_name}")
+        self.acq_func = get_acquisition_function(model=self.model, acq_func_name=self.acq_func_name, mc_points=self.mc_points)
+        acquired_point = optimize_acq_func(acq_func=self.acq_func, design_space=self.grid_points, discrete=True, normalized_bounds=None)
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")

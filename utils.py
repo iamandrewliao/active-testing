@@ -3,13 +3,14 @@ import argparse
 
 from botorch.models.transforms import Normalize, Standardize
 from botorch.models import SingleTaskGP
+from botorch.models.kernels import InfiniteWidthBNNKernel
 from botorch.fit import fit_gpytorch_mll
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.models.transforms import Normalize, Standardize
-from botorch.models.fully_bayesian import SaasFullyBayesianSingleTaskGP
+from botorch.models.fully_bayesian import SaasFullyBayesianSingleTaskGP, FullyBayesianSingleTaskGP
 from botorch.fit import fit_fully_bayesian_model_nuts
 
-from botorch.acquisition.analytic import UpperConfidenceBound
+from botorch.acquisition.analytic import PosteriorStandardDeviation
 from botorch.acquisition.active_learning import qNegIntegratedPosteriorVariance
 from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
@@ -25,13 +26,28 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
     # print(f"Fitting {model_name} model with {train_X.shape[0]} points...")
     input_transform = Normalize(d=train_X.shape[-1], bounds=bounds) # normalizes X to [0, 1]^d
     outcome_transform=Standardize(m=1) # standardizes Y to have zero mean and unit variance
-    if model_name=="SingleTaskGP":
-        model = SingleTaskGP(train_X=train_X, 
-                             train_Y=train_Y,
-                             input_transform=input_transform,
-                             outcome_transform=outcome_transform)
+    if model_name=="SingleTaskGP" or model_name == "I-BNN": # infinite-width BNN is just a GP with a special kernel
+        if model_name == "SingleTaskGP":
+            kernel = None
+        elif model_name == "I-BNN":
+            kernel = InfiniteWidthBNNKernel(depth=3)
+        model = SingleTaskGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            input_transform=input_transform,
+            outcome_transform=outcome_transform,
+            covar_module=kernel
+            )
         mll = ExactMarginalLogLikelihood(likelihood=model.likelihood, model=model)
         fit_gpytorch_mll(mll)
+    elif model_name=="FullyBayesianSingleTaskGP":
+        model = FullyBayesianSingleTaskGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            input_transform=input_transform,
+            outcome_transform=outcome_transform
+        )
+        fit_fully_bayesian_model_nuts(model)
     elif model_name=="SaasFullyBayesianSingleTaskGP":
         model = SaasFullyBayesianSingleTaskGP(
             train_X=train_X,
@@ -39,14 +55,13 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
             input_transform=input_transform,
             outcome_transform=outcome_transform
         )
-        fit_fully_bayesian_model_nuts(model) # Fit the model using NUTS (MCMC)
+        fit_fully_bayesian_model_nuts(model)
     return model
 
 
-def run_acquisition(model, acq_func_name, design_space, discrete=True, normalized_bounds=None, mc_points=None):
-    # Define acquisition function
-    if acq_func_name == "UCB":
-        acq_func = UpperConfidenceBound(model=model, beta=1.0)
+def get_acquisition_function(model, acq_func_name, mc_points=None):
+    if acq_func_name == "PSD":
+        acq_func = PosteriorStandardDeviation(model=model)
     elif acq_func_name == "qNIPV":
         if mc_points is None:
              raise ValueError("mc_points must be provided to run_acquisition for qNIPV.")
@@ -59,7 +74,10 @@ def run_acquisition(model, acq_func_name, design_space, discrete=True, normalize
     else:
         raise ValueError(f"Unknown acq_func_name: {acq_func_name}")
     
-    # Optimize acquisition function
+    return acq_func
+
+
+def optimize_acq_func(acq_func, design_space, discrete=True, normalized_bounds=None):
     if discrete:
         candidate, _ = optimize_acqf_discrete(
             acq_function=acq_func,
@@ -259,6 +277,16 @@ def parse_args():
         type=str,
         default=None,
         help="Path to a CSV file from which to load evaluation points. Could be the full eval results CSV file or just the eval points CSV file."
+    )
+    parser.add_argument(
+        '--model_name',
+        type=str,
+        help="Surrogate model to use for active testing (e.g. 'FullyBayesianSingleTaskGP')."
+    )
+    parser.add_argument(
+        '--acq_func_name',
+        type=str,
+        help="Acquisition function to use (e.g. 'qBALD')."
     )
 
     args = parser.parse_args()

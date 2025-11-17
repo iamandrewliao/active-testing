@@ -1,4 +1,15 @@
 # Active testing for robot policy evaluation
+## Acquisition functions and surrogate models
+### Available
+I have included the following acquisition functions and surrogate models:
+| Acq. function     | Surrogate models                                                                                           |
+|-------------------|------------------------------------------------------------------------------------------------------------|
+| qBALD, qNIPV, PSD | SingleTaskGP, I-BNN (Infinite-Width Bayesian NN), FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP |
+### Compatibility
+| Acq. function | Models that work                                                                    |
+|---------------|-------------------------------------------------------------------------------------|
+| qBALD         | Fully Bayesian models e.g. FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP |
+| qNIPV, PSD    | Any                                                                                 |
 ## Key files
 - [./testers.py](./testers.py): Implements the logic for active testing, iid testing, loading points, etc.
 - [./utils.py](./utils.py): Helper functions
@@ -8,7 +19,7 @@ Example run commands:
 ```
 uv run eval.py --mode brute_force --num_evals 100 --output_file results/bf_results.csv --save_points points/bf_points.csv --grid_resolution 11
 uv run eval.py --mode iid --num_evals 50 --output_file results/iid_results.csv --save_points points/iid_points.csv --grid_resolution 11
-uv run eval.py --mode active --num_evals 50 --output_file results/active_results.csv --save_points points/active_points.csv --grid_resolution 11
+uv run eval.py --mode active --num_evals 50 --output_file results/active_results.csv --save_points points/active_points.csv --grid_resolution 11 --model_name SingleTaskGP --acq_func_name PSD
 uv run eval.py --mode loaded --load_path points/policyA_bf_points.csv --output_file results/policyB_bf_results.csv
 ```
 - [./viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
@@ -27,6 +38,6 @@ uv run next_data_to_collect.py
 ```
 - [./test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
 ```
-uv run test_active.py --save_path ./visualizations/test/sampler_comparison.png
+uv run test_active.py --save_path ./visualizations/test/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
 ```
 **Note:** Make sure to change ActiveTester.get_next_point() in [./testers.py](./testers.py) first

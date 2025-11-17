@@ -9,14 +9,9 @@ import matplotlib.animation as animation
 import os
 
 # Import necessary BoTorch/GPyTorch components
-from botorch.models import SingleTaskGP
-from botorch.models.transforms import Normalize, Standardize
-from botorch.fit import fit_gpytorch_mll
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from botorch.acquisition.joint_entropy_search import qJointEntropySearch
-from botorch.acquisition.utils import get_optimal_samples
+from botorch.utils.sampling import draw_sobol_samples
 
-from utils import get_grid_points, is_valid_point, fit_surrogate_model
+from utils import get_grid_points, is_valid_point, fit_surrogate_model, get_acquisition_function, optimize_acq_func
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
@@ -70,10 +65,10 @@ def plot_tested_points(df, output_file):
     plt.gca().set_aspect('equal', adjustable='box')
     plt.savefig(output_file, bbox_inches='tight')
     plt.close()
-    print("Done.")
+    print(f"Saved figure to {output_file}.")
 
 
-def plot_active_learning(df, output_file, grid_resolution):
+def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_name):
     """
     Plots the surrogate model mean and acquisition function landscape
     for an active testing run.
@@ -87,29 +82,20 @@ def plot_active_learning(df, output_file, grid_resolution):
         return
     # Set seed for deterministic 'get_optimal_samples'
     # Use the number of data points as the seed
-    if train_X.shape[0] >= 2: # Only needed if we call JES
-        torch.manual_seed(train_X.shape[0])
-        print(f"Using seed {train_X.shape[0]}")
-    model = fit_surrogate_model(train_X, train_Y, BOUNDS)
-
-    # 2. Get the acquisition function (JES)
-    normalized_bounds = torch.tensor([[0.0] * 2, [1.0] * 2], **tkwargs) # Bounds for normalized space
-    jes = None
     if train_X.shape[0] >= 2:
-        try:
-            optimal_inputs, optimal_outputs = get_optimal_samples(
-                model, bounds=normalized_bounds, num_optima=16
-            )
-            jes = qJointEntropySearch(
-                model=model,
-                optimal_inputs=optimal_inputs,
-                optimal_outputs=optimal_outputs,
-                estimation_type="LB",
-            )
-        except Exception as e:
-            print(f"Warning: Could not compute JES: {e}. Acquisition plot will be empty.")
-    else:
-        print("Warning: Need at least 2 data points to compute JES. Acquisition plot will be empty.")
+        torch.manual_seed(train_X.shape[0]+1)
+        print(f"Using seed {train_X.shape[0]}")
+    print(f"  Fitting {model_name} model...")
+    model = fit_surrogate_model(train_X, train_Y, BOUNDS, model_name=model_name)
+
+    # 2. Get the acquisition function
+    print(f"  Instantiating {acq_func_name} acquisition function.")
+    mc_points = None
+    if acq_func_name == "qNIPV":
+        mc_points = draw_sobol_samples(
+            bounds=BOUNDS, n=128, q=1
+        ).squeeze(1).to(**tkwargs)
+    acq_func = get_acquisition_function(model=model, acq_func_name=acq_func_name, mc_points=mc_points)
 
     # 3. Create grid and evaluate
     grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
@@ -126,17 +112,21 @@ def plot_active_learning(df, output_file, grid_resolution):
     with torch.no_grad():
         # --- Apply mask to mean values ---
         posterior = model.posterior(grid_tensor)
-        mean_values_flat = posterior.mean.numpy() # Get all predictions
+        # Get the mean, handling 2D [S, N] output for Bayesian models
+        mean_tensor = posterior.mean.squeeze(-1) # Shape is [N] or [S, N]
+        if mean_tensor.ndim == 2:
+            mean_tensor = mean_tensor.mean(dim=0) # Average over S samples to get [N]
+        mean_values_flat = mean_tensor.numpy() # shape [N]
         mean_values_flat[~valid_mask_flat] = np.nan # Set invalid to NaN
         mean_values = mean_values_flat.reshape(grid_shape)
 
         # Calculate acq values only for valid points
-        if jes is not None and valid_grid_tensor.shape[0] > 0:
+        if acq_func is not None and valid_grid_tensor.shape[0] > 0:
             try:
-                valid_acq_values = jes(valid_grid_tensor.reshape(-1, 1, 2)).numpy()
+                valid_acq_values = acq_func(valid_grid_tensor.reshape(-1, 1, 2)).numpy()
                 acq_values_flat[valid_mask_flat] = valid_acq_values
             except Exception as e:
-                 print(f"Warning: JES evaluation failed: {e}")
+                 print(f"Warning: {acq_func_name} evaluation failed: {e}")
         acq_values = acq_values_flat.reshape(grid_shape)
 
     # 4. Plotting
@@ -169,7 +159,7 @@ def plot_active_learning(df, output_file, grid_resolution):
         df['x'], df['y'], c=df['continuous_outcome'], cmap='viridis_r', 
         vmin=0, vmax=4, edgecolors='w', s=50, label='Tested Points', zorder=2
     )
-    ax.set_title(f'Surrogate Model (GP Mean) (N={len(df)})')
+    ax.set_title(f'Surrogate Model ({model_name}) (N={len(df)})')
     ax.set_xlabel('X Position')
     ax.set_ylabel('Y Position')
     ax.legend()
@@ -182,7 +172,7 @@ def plot_active_learning(df, output_file, grid_resolution):
     cmap_acq = plt.cm.magma.copy()
     cmap_acq.set_bad(color='gray') # Show NaN values (invalid points) as gray
     im = ax.imshow(acq_values, origin='lower', extent=plot_extent, cmap=cmap_acq, aspect='equal')
-    fig.colorbar(im, ax=ax, label='Acquisition Value (JES)')
+    fig.colorbar(im, ax=ax, label=f'Acquisition Value ({acq_func_name})')
     # Scatter plot colored by outcome with white edge
     ax.scatter(
         df['x'], df['y'], c=df['continuous_outcome'], cmap='viridis_r', 
@@ -200,15 +190,15 @@ def plot_active_learning(df, output_file, grid_resolution):
 
     plt.savefig(output_file, bbox_inches='tight')
     plt.close()
-    print("Done.")
+    print(f"Saved figure to {output_file}.")
 
 
-def animate_active_learning(df, output_file, grid_resolution, interval=500):
+def animate_active_learning(df, output_file, grid_resolution, model_name, acq_func_name, interval=500):
     """
     Generates an MP4 animation showing the evolution of the surrogate model
     and acquisition function during an active testing run, using the 'mode' column.
     """
-    print(f"Generating active learning animation -> {output_file}...")
+    print(f"Generating active learning animation (Model: {model_name}, Acqf: {acq_func_name}) -> {output_file}...")
     total_trials = len(df)
     if total_trials < 2:
         print("Error: Need at least 2 data point to show the next acquired points.")
@@ -259,7 +249,7 @@ def animate_active_learning(df, output_file, grid_resolution, interval=500):
     im_acq = axes[1].imshow(np.zeros(grid_shape), origin='lower', extent=plot_extent, cmap=cmap_acq, aspect='equal')
     sc_acq = axes[1].scatter([], [], c=[], cmap='viridis_r', vmin=0, vmax=4, edgecolors='w', s=50, label='Tested Points', zorder=2)
     sc_next_acq = axes[1].scatter([], [], c='red', edgecolors='w', s=150, marker='*', label='Next Acquired', zorder=10) 
-    cb_acq = fig.colorbar(im_acq, ax=axes[1], label='Acquisition Value (JES)')
+    cb_acq = fig.colorbar(im_acq, ax=axes[1], label=f'Acquisition Value ({acq_func_name})')
     axes[1].set_xlabel('X Position')
     axes[1].set_ylabel('Y Position')
     axes[1].legend(loc='upper right')
@@ -290,35 +280,38 @@ def animate_active_learning(df, output_file, grid_resolution, interval=500):
         acq_values_flat = np.full(grid_tensor.shape[0], np.nan)
         # Set seed based on 't' (the number of points used for fitting) to match eval.py
         if train_X.shape[0] >= 1: # Always set seed before fitting
-            torch.manual_seed(t)
+            torch.manual_seed(t+1)
             print(f"Using seed {t}")
         # Fit model on data 1...t
-        model = fit_surrogate_model(train_X, train_Y, BOUNDS)
+        model = fit_surrogate_model(train_X, train_Y, BOUNDS, model_name=model_name)
         with torch.no_grad():
             posterior = model.posterior(grid_tensor)
-            mean_values_flat = posterior.mean.numpy()
+            # Get the mean, handling 2D [S, N] output for Bayesian models
+            mean_tensor = posterior.mean.squeeze(-1) # Shape is [N] or [S, N]
+            if mean_tensor.ndim == 2:
+                mean_tensor = mean_tensor.mean(dim=0) # Average over S samples to get [N]
+            mean_values_flat = mean_tensor.numpy() # shape [N]
             mean_values_flat[~valid_mask_flat] = np.nan # Apply mask
         mean_values = mean_values_flat.reshape(grid_shape)
     
-        # Calculate JES based on model 1...t
+        # Calculate acquisition function based on model 1...t
+        acq_func = None
         if train_X.shape[0] >= 2:
-            try:
-                optimal_inputs, optimal_outputs = get_optimal_samples(
-                    model, bounds=normalized_bounds, num_optima=16
-                )
-                jes = qJointEntropySearch(
-                    model=model,
-                    optimal_inputs=optimal_inputs,
-                    optimal_outputs=optimal_outputs,
-                    estimation_type="LB",
-                )
-                with torch.no_grad():
-                    if valid_grid_tensor.shape[0] > 0:
-                        valid_acq_values = jes(valid_grid_tensor.reshape(-1, 1, 2)).numpy()
-                        acq_values_flat[valid_mask_flat] = valid_acq_values
-            except Exception as e:
-                if t == 2: # Print warning on first attempt
-                    print(f"    Warning: Could not compute JES at t={t}: {e}")
+            mc_points = None
+            if acq_func_name == "qNIPV":
+                mc_points = draw_sobol_samples(
+                    bounds=BOUNDS, n=128, q=1
+                ).squeeze(1).to(**tkwargs)
+            acq_func = get_acquisition_function(model=model, acq_func_name=acq_func_name, mc_points=mc_points)
+
+        with torch.no_grad():
+            if acq_func is not None and valid_grid_tensor.shape[0] > 0:
+                try:
+                    valid_acq_values = acq_func(valid_grid_tensor.reshape(-1, 1, 2)).numpy()
+                    acq_values_flat[valid_mask_flat] = valid_acq_values
+                except Exception as e:
+                    if t == 2: # Print warning on first attempt
+                        print(f"    Warning: Could not compute {acq_func_name} at t={t}: {e}")
         
         acq_values = acq_values_flat.reshape(grid_shape)
     
@@ -347,8 +340,8 @@ def animate_active_learning(df, output_file, grid_resolution, interval=500):
         sc_next_acq.set_offsets([[next_point_x, next_point_y]])
     
         # Update Titles
-        axes[0].set_title(f'Surrogate Model (GP Mean) (State at N={t})')
-        axes[1].set_title(f'Acquisition Function (JES) (Mode: {current_mode})')
+        axes[0].set_title(f'Surrogate Model ({model_name} Mean) (State at N={t})')
+        axes[1].set_title(f'Acquisition Function ({acq_func_name}) (Mode: {current_mode})')
     
         fig.suptitle(f'Active Testing: State at Trial {t}, Predicting Trial {t+1} (Out of {total_trials})', fontsize=16, y=0.95)
     
@@ -369,12 +362,149 @@ def animate_active_learning(df, output_file, grid_resolution, interval=500):
     plt.close(fig)
 
 
-def plot_comparison(results_list, gt_df, output_file, grid_resolution):
+# def plot_comparison(results_list, gt_df, output_file, grid_resolution, model_name):
+#     """
+#     Generates a plot comparing model errors from one or more runs
+#     (e.g., Active, IID) against a ground truth model.
+#     """
+#     print(f"Generating comparison plot (Model: {model_name}) -> {output_file}...")
+
+#     # --- Create grid and validity mask ---
+#     grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
+#     grid_shape = (grid_resolution, grid_resolution)
+#     valid_mask_flat = np.array([is_valid_point(p) for p in grid_tensor])
+
+#     # 1. Fit Ground Truth model
+#     X_gt, Y_gt = _get_tensors_from_df(gt_df)
+#     print(f"  Fitting Ground Truth {model_name} model (N={len(X_gt)})...")
+#     if len(X_gt) < 1:
+#          print("Error: Ground truth data is empty. Cannot generate comparison plot.")
+#          return
+#     model_gt = fit_surrogate_model(X_gt, Y_gt, BOUNDS, model_name=model_name)
+
+#     with torch.no_grad():
+#         # --- Apply mask to GT mean ---
+#         mean_tensor_gt = model_gt.posterior(grid_tensor).mean.squeeze(-1)
+#         if mean_tensor_gt.ndim == 2:
+#             mean_tensor_gt = mean_tensor_gt.mean(dim=0)
+            
+#         mean_gt_flat = mean_tensor_gt.numpy()
+#         mean_gt_flat[~valid_mask_flat] = np.nan
+#         mean_gt = mean_gt_flat.reshape(grid_shape)
+
+#     # 2. Fit each model and calculate error
+#     errors_and_stats = []
+#     for label, df in results_list:
+#         X_model, Y_model = _get_tensors_from_df(df)
+#         if len(X_model) < 1:
+#             print(f"  Skipping {label} model (N=0).")
+#             continue
+#         print(f"  Fitting {label} {model_name} model (N={len(X_model)})...")
+#         model = fit_surrogate_model(X_model, Y_model, BOUNDS, model_name=model_name)
+
+#         with torch.no_grad():
+#             # --- Apply mask to model mean ---
+#             mean_tensor_model = model.posterior(grid_tensor).mean.squeeze(-1)
+#             if mean_tensor_model.ndim == 2:
+#                 mean_tensor_model = mean_tensor_model.mean(dim=0)
+                
+#             mean_model_flat = mean_tensor_model.numpy()
+#             mean_model_flat[~valid_mask_flat] = np.nan
+#             mean_model = mean_model_flat.reshape(grid_shape)
+
+#         # error_map will have NaNs in invalid areas automatically
+#         error_map = np.abs(mean_model - mean_gt)
+#         # np.nanmean computes MAE *only* over valid areas
+#         mae = np.nanmean(error_map)
+#         print(f"    Valid Area MAE ({label}): {mae:.4f}")
+
+#         errors_and_stats.append({
+#             'label': label,
+#             'n': len(X_model),
+#             'error_map': error_map,
+#             'mae': mae
+#         })
+
+#     # 3. Plotting
+#     num_models = len(errors_and_stats)
+#     num_plots = num_models + 1 # +1 for GT
+
+#     fig, axes = plt.subplots(1, num_plots, figsize=(9 * num_plots, 9))
+#     if num_plots == 0:
+#         print("Error: No models provided or fit successfully for comparison.")
+#         return
+#     elif num_plots == 1:
+#         axes = [axes]
+#     else:
+#         axes = axes.flatten()
+
+#     # Calculate extent to center pixels
+#     x_min, y_min = BOUNDS[0, 0].item(), BOUNDS[0, 1].item()
+#     x_max, y_max = BOUNDS[1, 0].item(), BOUNDS[1, 1].item()
+    
+#     if grid_resolution > 1:
+#         x_step = (x_max - x_min) / (grid_resolution - 1)
+#         y_step = (y_max - y_min) / (grid_resolution - 1)
+#         half_x_step, half_y_step = x_step / 2.0, y_step / 2.0
+#         plot_extent = [
+#             x_min - half_x_step, x_max + half_x_step,
+#             y_min - half_y_step, y_max + half_y_step
+#         ]
+#     else:
+#         plot_extent = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
+
+#     # Determine a common error scale
+#     vmax_error = 0
+#     if errors_and_stats:
+#         valid_maxes = [np.nanmax(stats['error_map']) for stats in errors_and_stats if not np.all(np.isnan(stats['error_map']))]
+#         if valid_maxes:
+#             vmax_error = max(valid_maxes)
+#         if vmax_error == 0 or not valid_maxes: vmax_error=1.0
+
+#     # --- Plot 1...N: Model Errors ---
+#     for i, stats in enumerate(errors_and_stats):
+#         ax = axes[i]
+#         cmap_err = plt.cm.hot.copy()
+#         cmap_err.set_bad(color='gray')
+#         im = ax.imshow(stats['error_map'], origin='lower', extent=plot_extent, cmap=cmap_err, vmin=0, vmax=vmax_error, aspect='equal')
+#         fig.colorbar(im, ax=ax, label='Absolute Error')
+#         ax.set_title(f"{stats['label']} Model Error (N={stats['n']})\nValid Area MAE = {stats['mae']:.4f}")
+#         ax.set_xlabel('X Position')
+#         if i == 0:
+#             ax.set_ylabel('Y Position')
+#         ax.set_xlim(plot_extent[0], plot_extent[1])
+#         ax.set_ylim(plot_extent[2], plot_extent[3])
+
+
+#     # --- Plot N+1: Ground Truth Model ---
+#     ax_gt = axes[num_models]
+#     cmap_gt = plt.cm.viridis_r.copy()
+#     cmap_gt.set_bad(color='gray')
+#     im_gt = ax_gt.imshow(mean_gt, origin='lower', extent=plot_extent, cmap=cmap_gt, vmin=0, vmax=4, aspect='equal')
+#     fig.colorbar(im_gt, ax=ax_gt, label='Predicted Outcome (Mean)')
+#     ax_gt.set_title(f'Ground Truth Model ({model_name}, N={len(X_gt)})')
+#     ax_gt.set_xlabel('X Position')
+#     if num_models == 0:
+#         ax_gt.set_ylabel('Y Position')
+#     ax_gt.set_xlim(plot_extent[0], plot_extent[1])
+#     ax_gt.set_ylim(plot_extent[2], plot_extent[3])
+
+#     plt.suptitle(f'Model Comparison vs. Ground Truth (N={len(X_gt)})', fontsize=16, y=0.96)
+#     plt.tight_layout(rect=[0, 0.03, 1, 0.93])
+
+#     plt.savefig(output_file, bbox_inches='tight')
+#     plt.close()
+#     print(f"Saved figure to {output_file}.")
+
+def plot_comparison(
+    results_list, gt_df, output_file, 
+    grid_resolution, model_name, plot_mode='error'
+):
     """
-    Generates a plot comparing model errors from one or more runs
+    Generates a plot comparing model errors or model means from one or more runs
     (e.g., Active, IID) against a ground truth model.
     """
-    print(f"Generating comparison plot -> {output_file}...")
+    print(f"Generating comparison plot (Mode: {plot_mode}, Model: {model_name}) -> {output_file}...")
 
     # --- Create grid and validity mask ---
     grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
@@ -383,49 +513,61 @@ def plot_comparison(results_list, gt_df, output_file, grid_resolution):
 
     # 1. Fit Ground Truth model
     X_gt, Y_gt = _get_tensors_from_df(gt_df)
-    print(f"  Fitting Ground Truth model (N={len(X_gt)})...")
+    print(f"  Fitting Ground Truth {model_name} model (N={len(X_gt)})...")
     if len(X_gt) < 1:
          print("Error: Ground truth data is empty. Cannot generate comparison plot.")
          return
-    model_gt = fit_surrogate_model(X_gt, Y_gt, BOUNDS)
+    model_gt = fit_surrogate_model(X_gt, Y_gt, BOUNDS, model_name=model_name)
 
     with torch.no_grad():
         # --- Apply mask to GT mean ---
-        mean_gt_flat = model_gt.posterior(grid_tensor).mean.numpy()
+        mean_tensor_gt = model_gt.posterior(grid_tensor).mean.squeeze(-1)
+        if mean_tensor_gt.ndim == 2:
+            mean_tensor_gt = mean_tensor_gt.mean(dim=0)
+            
+        mean_gt_flat = mean_tensor_gt.numpy()
         mean_gt_flat[~valid_mask_flat] = np.nan
         mean_gt = mean_gt_flat.reshape(grid_shape)
 
-    # 2. Fit each model and calculate error
-    errors_and_stats = []
+    # 2. Fit each model and calculate error/stats
+    model_data_list = [] # Renamed from errors_and_stats
     for label, df in results_list:
         X_model, Y_model = _get_tensors_from_df(df)
         if len(X_model) < 1:
             print(f"  Skipping {label} model (N=0).")
             continue
-        print(f"  Fitting {label} model (N={len(X_model)})...")
-        model = fit_surrogate_model(X_model, Y_model, BOUNDS)
+        print(f"  Fitting {label} {model_name} model (N={len(X_model)})...")
+        model = fit_surrogate_model(X_model, Y_model, BOUNDS, model_name=model_name)
 
         with torch.no_grad():
             # --- Apply mask to model mean ---
-            mean_model_flat = model.posterior(grid_tensor).mean.numpy()
+            mean_tensor_model = model.posterior(grid_tensor).mean.squeeze(-1)
+            if mean_tensor_model.ndim == 2:
+                mean_tensor_model = mean_tensor_model.mean(dim=0)
+                
+            mean_model_flat = mean_tensor_model.numpy()
             mean_model_flat[~valid_mask_flat] = np.nan
             mean_model = mean_model_flat.reshape(grid_shape)
 
-        # error_map will have NaNs in invalid areas automatically
-        error_map = np.abs(mean_model - mean_gt)
-        # np.nanmean computes MAE *only* over valid areas
-        mae = np.nanmean(error_map)
-        print(f"    Valid Area MAE ({label}): {mae:.4f}")
-
-        errors_and_stats.append({
+        # Store the mean map
+        stats_dict = {
             'label': label,
             'n': len(X_model),
-            'error_map': error_map,
-            'mae': mae
-        })
+            'mean_map': mean_model # Always store the mean map
+        }
+        
+        # Only calculate error if in 'error' mode
+        if plot_mode == 'error':
+            error_map = np.abs(mean_model - mean_gt)
+            mae = np.nanmean(error_map) # MAE only over valid areas
+            print(f"    Valid Area MAE ({label}): {mae:.4f}")
+            stats_dict['error_map'] = error_map
+            stats_dict['mae'] = mae
+
+        model_data_list.append(stats_dict)
 
     # 3. Plotting
-    num_models = len(errors_and_stats)
+    num_models = len(model_data_list)
     num_plots = num_models + 1 # +1 for GT
 
     fig, axes = plt.subplots(1, num_plots, figsize=(9 * num_plots, 9))
@@ -433,11 +575,11 @@ def plot_comparison(results_list, gt_df, output_file, grid_resolution):
         print("Error: No models provided or fit successfully for comparison.")
         return
     elif num_plots == 1:
-        axes = [axes]
+        axes = [axes] # Make it iterable
     else:
         axes = axes.flatten()
 
-    # Calculate extent to center pixels
+    # Calculate extent (same as before)
     x_min, y_min = BOUNDS[0, 0].item(), BOUNDS[0, 1].item()
     x_max, y_max = BOUNDS[1, 0].item(), BOUNDS[1, 1].item()
     
@@ -452,22 +594,49 @@ def plot_comparison(results_list, gt_df, output_file, grid_resolution):
     else:
         plot_extent = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
 
-    # Determine a common error scale
-    vmax_error = 0
-    if errors_and_stats:
-        valid_maxes = [np.nanmax(stats['error_map']) for stats in errors_and_stats if not np.all(np.isnan(stats['error_map']))]
-        if valid_maxes:
-            vmax_error = max(valid_maxes)
-        if vmax_error == 0 or not valid_maxes: vmax_error=1.0
+    # Determine a common error scale (only if needed)
+    vmax_error = 1.0
+    if plot_mode == 'error':
+        if model_data_list:
+            valid_maxes = [
+                np.nanmax(stats['error_map']) for stats in model_data_list 
+                if 'error_map' in stats and not np.all(np.isnan(stats['error_map']))
+            ]
+            if valid_maxes:
+                vmax_error = max(valid_maxes)
+            if vmax_error == 0 or not valid_maxes: 
+                vmax_error = 1.0
 
-    # --- Plot 1...N: Model Errors ---
-    for i, stats in enumerate(errors_and_stats):
+    # Define the colormaps
+    cmap_gt = plt.cm.viridis_r.copy()
+    cmap_gt.set_bad(color='gray')
+    cmap_err = plt.cm.hot.copy()
+    cmap_err.set_bad(color='gray')
+
+    # --- Plot 1...N: Model Plots (Error or Mean) ---
+    for i, stats in enumerate(model_data_list):
         ax = axes[i]
-        cmap_err = plt.cm.hot.copy()
-        cmap_err.set_bad(color='gray')
-        im = ax.imshow(stats['error_map'], origin='lower', extent=plot_extent, cmap=cmap_err, vmin=0, vmax=vmax_error, aspect='equal')
-        fig.colorbar(im, ax=ax, label='Absolute Error')
-        ax.set_title(f"{stats['label']} Model Error (N={stats['n']})\nValid Area MAE = {stats['mae']:.4f}")
+        
+        if plot_mode == 'error':
+            im = ax.imshow(
+                stats['error_map'], origin='lower', extent=plot_extent, 
+                cmap=cmap_err, vmin=0, vmax=vmax_error, aspect='equal'
+            )
+            fig.colorbar(im, ax=ax, label='Absolute Error')
+            ax.set_title(
+                f"{stats['label']} Model Error (N={stats['n']})\n"
+                f"Valid Area MAE = {stats['mae']:.4f}"
+            )
+        
+        elif plot_mode == 'mean':
+            im = ax.imshow(
+                stats['mean_map'], origin='lower', extent=plot_extent, 
+                cmap=cmap_gt, vmin=0, vmax=4, aspect='equal' # Use GT cmap and scale
+            )
+            fig.colorbar(im, ax=ax, label='Predicted Outcome (Mean)')
+            ax.set_title(f"{stats['label']} Model Mean (N={stats['n']})")
+            
+        # Common axis setup
         ax.set_xlabel('X Position')
         if i == 0:
             ax.set_ylabel('Y Position')
@@ -477,11 +646,12 @@ def plot_comparison(results_list, gt_df, output_file, grid_resolution):
 
     # --- Plot N+1: Ground Truth Model ---
     ax_gt = axes[num_models]
-    cmap_gt = plt.cm.viridis_r.copy()
-    cmap_gt.set_bad(color='gray')
-    im_gt = ax_gt.imshow(mean_gt, origin='lower', extent=plot_extent, cmap=cmap_gt, vmin=0, vmax=4, aspect='equal')
+    im_gt = ax_gt.imshow(
+        mean_gt, origin='lower', extent=plot_extent, 
+        cmap=cmap_gt, vmin=0, vmax=4, aspect='equal'
+    )
     fig.colorbar(im_gt, ax=ax_gt, label='Predicted Outcome (Mean)')
-    ax_gt.set_title(f'Ground Truth Model (N={len(X_gt)})')
+    ax_gt.set_title(f'Ground Truth Model ({model_name}, N={len(X_gt)})')
     ax_gt.set_xlabel('X Position')
     if num_models == 0:
         ax_gt.set_ylabel('Y Position')
@@ -493,8 +663,7 @@ def plot_comparison(results_list, gt_df, output_file, grid_resolution):
 
     plt.savefig(output_file, bbox_inches='tight')
     plt.close()
-    print("Done.")
-
+    print(f"Saved figure to {output_file}.")
 
 def main():
     parser = argparse.ArgumentParser(description="Visualization script for evaluation results.")
@@ -513,6 +682,13 @@ def main():
     )
     parser_active.add_argument('--results_file', type=str, required=True, help='Path to the active_results.csv file')
     parser_active.add_argument('--output_file', type=str, default='visualizations/active_plots.png', help='Output file path for the plot')
+    parser_active.add_argument(
+        '--model_name', type=str, default='SaasFullyBayesianSingleTaskGP', 
+        help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
+    )
+    parser_active.add_argument(
+        '--acq_func_name', type=str, default='qBALD', help='Name of acq func (e.g. UCB, qNIPV, qBALD)'
+    )
 
     # --- Command: animate-active ---
     parser_animate = subparsers.add_parser('animate-active', help='Animate active learning diagnostics over trials')
@@ -522,7 +698,13 @@ def main():
     parser_animate.add_argument('--results_file', type=str, required=True, help='Path to the active_results.csv file')
     parser_animate.add_argument('--interval', type=int, default=500, help='Delay between frames in milliseconds.')
     parser_animate.add_argument('--output_file', type=str, default='visualizations/active_animation.mp4', help='Output file path for the animation (.mp4)')
-
+    parser_animate.add_argument(
+        '--model_name', type=str, default='SaasFullyBayesianSingleTaskGP', 
+        help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
+    )
+    parser_animate.add_argument(
+        '--acq_func_name', type=str, default='qBALD', help='Name of acq func (e.g. UCB, qNIPV, qBALD)'
+    )
 
     # --- Command: plot-comparison ---
     parser_compare = subparsers.add_parser('plot-comparison', help='Compare model error against ground truth')
@@ -539,6 +721,15 @@ def main():
     parser_compare.add_argument(
         '--output_file', type=str, default='visualizations/comparison_plot.png', help='Output file path for the plot'
     )
+    parser_compare.add_argument(
+        '--model_name', type=str, default='SaasFullyBayesianSingleTaskGP', 
+        help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
+    )
+    parser_compare.add_argument(
+        '--plot_mode', type=str, choices=['error', 'mean'], default='error',
+        help="Type of plot to generate: 'error' (vs GT) or 'mean' (model output)"
+    )
+    
 
     args = parser.parse_args()
 
@@ -555,15 +746,14 @@ def main():
 
     elif args.command == 'plot-active':
         df = _load_data(args.results_file)
-        plot_active_learning(df, args.output_file, args.grid_resolution)
+        plot_active_learning(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name)
 
-    elif args.command == 'animate-active': # Modified command execution
+    elif args.command == 'animate-active':
         df = _load_data(args.results_file)
-        animate_active_learning(df, args.output_file, args.grid_resolution, args.interval)
+        animate_active_learning(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name, args.interval)
 
     elif args.command == 'plot-comparison':
         gt_df = _load_data(args.gt)
-
         results_list = []
         if not args.model:
             print("Warning: No --model files provided for comparison.")
@@ -571,8 +761,7 @@ def main():
             for label, filepath in args.model:
                 df = _load_data(filepath)
                 results_list.append((label, df))
-
-        plot_comparison(results_list, gt_df, args.output_file, args.grid_resolution)
+        plot_comparison(results_list, gt_df, args.output_file, args.grid_resolution, args.model_name, args.plot_mode)
 
 
 if __name__ == "__main__":
