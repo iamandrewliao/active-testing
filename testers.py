@@ -36,10 +36,11 @@ class ActiveTester:
             self.mc_points = self.grid_points # integrate over entire design space (no sampling)
         else:
             self.mc_points = mc_points
+        self.available_design_space = self.grid_points.clone()
 
     def get_next_point(self):
         """
-        Fits the model and optimizes the acquisition function to find the
+        Fits the surrogate model and optimizes the acquisition function to find the
         next best point to sample.
         """
         print(f"Fitting surrogate model {self.model_name}")
@@ -48,11 +49,13 @@ class ActiveTester:
 
         print(f"Optimizing acquisition function {self.acq_func_name}")
         self.acq_func = get_acquisition_function(model=self.model, acq_func_name=self.acq_func_name, mc_points=self.mc_points)
-        acquired_point = optimize_acq_func(acq_func=self.acq_func, design_space=self.grid_points, discrete=True, normalized_bounds=None)
+        acquired_point = optimize_acq_func(acq_func=self.acq_func, design_space=self.available_design_space, discrete=True, normalized_bounds=None)
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
 
+        # Remove the acquired point from the design space
+        self.available_design_space = self.available_design_space[~torch.all(self.available_design_space == acquired_point, dim=1)]
         return acquired_point
 
     def update(self, new_x, new_y):

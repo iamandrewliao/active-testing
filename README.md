@@ -26,10 +26,12 @@ uv run eval.py --mode loaded --load_path points/policyA_bf_points.csv --output_f
 
 Example run commands:
 ```
-uv run viz.py plot-points --results_file results/iid_results.csv --output_file visualizations/iid_points.png
-uv run viz.py plot-active --grid_resolution 11 --results_file results/active_results.csv --output_file visualizations/active_plots.png
-uv run viz.py animate-active --results_file results/active_results.csv --output_file visualizations/active_animation.mp4 --grid_resolution 11 --interval 750
-uv run viz.py plot-comparison --grid_resolution 11 --gt results/bf_results.csv --model Active results/active_results.csv --model IID results/iid_results.csv --output_file visualizations/comparison_bf_active_iid.png
+uv run viz.py plot-points --results_file results/iid_results.csv --output_file visualizations/robo_eval/iid_points.png
+# For plot-active and animate-active, make sure --model_name and --acq_func_name match what you used during evaluation so the acquired points make sense
+uv run viz.py plot-active --grid_resolution 11 --results_file results/active_results.csv --output_file visualizations/robo_eval/active_plots.png --model_name SingleTaskGP --acq_func_name PSD
+uv run viz.py animate-active --results_file results/active_results.csv --output_file visualizations/robo_eval/active_animation.mp4 --grid_resolution 11 --interval 750 --model_name SingleTaskGP --acq_func_name PSD
+# For plot-comparison it is recommended that --model_name matches what you used during evaluation for consistency (however, you might be interested in other experiments like using a different model post-eval)
+uv run viz.py plot-comparison --grid_resolution 11 --gt_results_file results/bf_results.csv --add_results_file Active results/active_results.csv --add_results_file IID results/iid_results.csv --output_file visualizations/robo_eval/comparison_bf_active_iid.png --model_name SingleTaskGP --plot_mode mean
 ```
 **Note:** The grid_resolution should be a multiple of the resolution used during eval.
 - [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods (to be developed))
@@ -38,6 +40,6 @@ uv run next_data_to_collect.py
 ```
 - [./test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
 ```
-uv run test_active.py --save_path ./visualizations/test/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
+uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
 ```
 **Note:** Make sure to change ActiveTester.get_next_point() in [./testers.py](./testers.py) first

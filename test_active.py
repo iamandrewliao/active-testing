@@ -38,7 +38,7 @@ def simulate_data(num_sim_points, num_init):
         bounds=BOUNDS,
         n=num_sim_points,
         q=1,  # q=1 means we get N points of 1 sample each
-        seed=0  # Make it reproducible
+        seed=1  # Make it reproducible
     ).squeeze(1) # Squeeze from [N, q, D] to shape [N, D]
     
     # 2. Evaluate the true function on all grid points
@@ -53,7 +53,7 @@ def simulate_data(num_sim_points, num_init):
     })
     
     # 4. Select initial points (same for all samplers)
-    torch.manual_seed(0) # for reproducible starting points
+    torch.manual_seed(1) # for reproducible starting points
     init_indices = torch.randperm(sim_pts.shape[0])[:num_init]
     
     init_df = sim_df.iloc[init_indices].copy()
@@ -72,7 +72,7 @@ def create_test_set(num_sim_points):
         bounds=BOUNDS,
         n=num_sim_points,
         q=1,
-        seed=12345
+        seed=0
     ).squeeze(1)
     with torch.no_grad():
         Y_test = true_function(X_test).view(-1)
@@ -160,18 +160,15 @@ if __name__ == "__main__":
     parser.add_argument(
         '--save_path',
         type=str,
-        default='./visualizations/test/sampler_comparison.png',
+        default='./visualizations/test_function/sampler_comparison.png',
         help='Path where the visualization will be saved.'
     )
     parser.add_argument(
-        '--model_name',
-        type=str,
-        help="Surrogate model to use for active testing (e.g. 'FullyBayesianSingleTaskGP')."
+        '--model_name', type=str, default='SingleTaskGP', 
+        help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
     )
     parser.add_argument(
-        '--acq_func_name',
-        type=str,
-        help="Acquisition function to use (e.g. 'qBALD')."
+        '--acq_func_name', type=str, default='PSD', help='Name of acq func (e.g. PSD, qNIPV, qBALD)'
     )
     parser.add_argument(
         "--num_init_pts",

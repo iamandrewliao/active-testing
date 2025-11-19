@@ -362,175 +362,66 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
     plt.close(fig)
 
 
-# def plot_comparison(results_list, gt_df, output_file, grid_resolution, model_name):
-#     """
-#     Generates a plot comparing model errors from one or more runs
-#     (e.g., Active, IID) against a ground truth model.
-#     """
-#     print(f"Generating comparison plot (Model: {model_name}) -> {output_file}...")
-
-#     # --- Create grid and validity mask ---
-#     grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
-#     grid_shape = (grid_resolution, grid_resolution)
-#     valid_mask_flat = np.array([is_valid_point(p) for p in grid_tensor])
-
-#     # 1. Fit Ground Truth model
-#     X_gt, Y_gt = _get_tensors_from_df(gt_df)
-#     print(f"  Fitting Ground Truth {model_name} model (N={len(X_gt)})...")
-#     if len(X_gt) < 1:
-#          print("Error: Ground truth data is empty. Cannot generate comparison plot.")
-#          return
-#     model_gt = fit_surrogate_model(X_gt, Y_gt, BOUNDS, model_name=model_name)
-
-#     with torch.no_grad():
-#         # --- Apply mask to GT mean ---
-#         mean_tensor_gt = model_gt.posterior(grid_tensor).mean.squeeze(-1)
-#         if mean_tensor_gt.ndim == 2:
-#             mean_tensor_gt = mean_tensor_gt.mean(dim=0)
-            
-#         mean_gt_flat = mean_tensor_gt.numpy()
-#         mean_gt_flat[~valid_mask_flat] = np.nan
-#         mean_gt = mean_gt_flat.reshape(grid_shape)
-
-#     # 2. Fit each model and calculate error
-#     errors_and_stats = []
-#     for label, df in results_list:
-#         X_model, Y_model = _get_tensors_from_df(df)
-#         if len(X_model) < 1:
-#             print(f"  Skipping {label} model (N=0).")
-#             continue
-#         print(f"  Fitting {label} {model_name} model (N={len(X_model)})...")
-#         model = fit_surrogate_model(X_model, Y_model, BOUNDS, model_name=model_name)
-
-#         with torch.no_grad():
-#             # --- Apply mask to model mean ---
-#             mean_tensor_model = model.posterior(grid_tensor).mean.squeeze(-1)
-#             if mean_tensor_model.ndim == 2:
-#                 mean_tensor_model = mean_tensor_model.mean(dim=0)
-                
-#             mean_model_flat = mean_tensor_model.numpy()
-#             mean_model_flat[~valid_mask_flat] = np.nan
-#             mean_model = mean_model_flat.reshape(grid_shape)
-
-#         # error_map will have NaNs in invalid areas automatically
-#         error_map = np.abs(mean_model - mean_gt)
-#         # np.nanmean computes MAE *only* over valid areas
-#         mae = np.nanmean(error_map)
-#         print(f"    Valid Area MAE ({label}): {mae:.4f}")
-
-#         errors_and_stats.append({
-#             'label': label,
-#             'n': len(X_model),
-#             'error_map': error_map,
-#             'mae': mae
-#         })
-
-#     # 3. Plotting
-#     num_models = len(errors_and_stats)
-#     num_plots = num_models + 1 # +1 for GT
-
-#     fig, axes = plt.subplots(1, num_plots, figsize=(9 * num_plots, 9))
-#     if num_plots == 0:
-#         print("Error: No models provided or fit successfully for comparison.")
-#         return
-#     elif num_plots == 1:
-#         axes = [axes]
-#     else:
-#         axes = axes.flatten()
-
-#     # Calculate extent to center pixels
-#     x_min, y_min = BOUNDS[0, 0].item(), BOUNDS[0, 1].item()
-#     x_max, y_max = BOUNDS[1, 0].item(), BOUNDS[1, 1].item()
-    
-#     if grid_resolution > 1:
-#         x_step = (x_max - x_min) / (grid_resolution - 1)
-#         y_step = (y_max - y_min) / (grid_resolution - 1)
-#         half_x_step, half_y_step = x_step / 2.0, y_step / 2.0
-#         plot_extent = [
-#             x_min - half_x_step, x_max + half_x_step,
-#             y_min - half_y_step, y_max + half_y_step
-#         ]
-#     else:
-#         plot_extent = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
-
-#     # Determine a common error scale
-#     vmax_error = 0
-#     if errors_and_stats:
-#         valid_maxes = [np.nanmax(stats['error_map']) for stats in errors_and_stats if not np.all(np.isnan(stats['error_map']))]
-#         if valid_maxes:
-#             vmax_error = max(valid_maxes)
-#         if vmax_error == 0 or not valid_maxes: vmax_error=1.0
-
-#     # --- Plot 1...N: Model Errors ---
-#     for i, stats in enumerate(errors_and_stats):
-#         ax = axes[i]
-#         cmap_err = plt.cm.hot.copy()
-#         cmap_err.set_bad(color='gray')
-#         im = ax.imshow(stats['error_map'], origin='lower', extent=plot_extent, cmap=cmap_err, vmin=0, vmax=vmax_error, aspect='equal')
-#         fig.colorbar(im, ax=ax, label='Absolute Error')
-#         ax.set_title(f"{stats['label']} Model Error (N={stats['n']})\nValid Area MAE = {stats['mae']:.4f}")
-#         ax.set_xlabel('X Position')
-#         if i == 0:
-#             ax.set_ylabel('Y Position')
-#         ax.set_xlim(plot_extent[0], plot_extent[1])
-#         ax.set_ylim(plot_extent[2], plot_extent[3])
-
-
-#     # --- Plot N+1: Ground Truth Model ---
-#     ax_gt = axes[num_models]
-#     cmap_gt = plt.cm.viridis_r.copy()
-#     cmap_gt.set_bad(color='gray')
-#     im_gt = ax_gt.imshow(mean_gt, origin='lower', extent=plot_extent, cmap=cmap_gt, vmin=0, vmax=4, aspect='equal')
-#     fig.colorbar(im_gt, ax=ax_gt, label='Predicted Outcome (Mean)')
-#     ax_gt.set_title(f'Ground Truth Model ({model_name}, N={len(X_gt)})')
-#     ax_gt.set_xlabel('X Position')
-#     if num_models == 0:
-#         ax_gt.set_ylabel('Y Position')
-#     ax_gt.set_xlim(plot_extent[0], plot_extent[1])
-#     ax_gt.set_ylim(plot_extent[2], plot_extent[3])
-
-#     plt.suptitle(f'Model Comparison vs. Ground Truth (N={len(X_gt)})', fontsize=16, y=0.96)
-#     plt.tight_layout(rect=[0, 0.03, 1, 0.93])
-
-#     plt.savefig(output_file, bbox_inches='tight')
-#     plt.close()
-#     print(f"Saved figure to {output_file}.")
-
 def plot_comparison(
     results_list, gt_df, output_file, 
     grid_resolution, model_name, plot_mode='error'
 ):
     """
     Generates a plot comparing model errors or model means from one or more runs
-    (e.g., Active, IID) against a ground truth model.
+    (e.g., Active, IID) against a ground truth dataset.
     """
     print(f"Generating comparison plot (Mode: {plot_mode}, Model: {model_name}) -> {output_file}...")
 
     # --- Create grid and validity mask ---
     grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
     grid_shape = (grid_resolution, grid_resolution)
+    # This mask is still needed for the *model* plots
     valid_mask_flat = np.array([is_valid_point(p) for p in grid_tensor])
 
-    # 1. Fit Ground Truth model
+    # 1. Load Ground Truth data (FIXED LOGIC)
+    #    We now map each (x, y) point to its grid index.
     X_gt, Y_gt = _get_tensors_from_df(gt_df)
-    print(f"  Fitting Ground Truth {model_name} model (N={len(X_gt)})...")
+    print(f"  Mapping Ground Truth data (N={len(X_gt)})...")
     if len(X_gt) < 1:
          print("Error: Ground truth data is empty. Cannot generate comparison plot.")
          return
-    model_gt = fit_surrogate_model(X_gt, Y_gt, BOUNDS, model_name=model_name)
 
-    with torch.no_grad():
-        # --- Apply mask to GT mean ---
-        mean_tensor_gt = model_gt.posterior(grid_tensor).mean.squeeze(-1)
-        if mean_tensor_gt.ndim == 2:
-            mean_tensor_gt = mean_tensor_gt.mean(dim=0)
-            
-        mean_gt_flat = mean_tensor_gt.numpy()
-        mean_gt_flat[~valid_mask_flat] = np.nan
-        mean_gt = mean_gt_flat.reshape(grid_shape)
+    # Create a nan-filled flat array for the GT map
+    mean_gt_flat = np.full(grid_tensor.shape[0], np.nan)
+    
+    # Create a fast lookup map from "(x_str, y_str)" -> grid_index
+    # We use formatted strings to handle floating point comparisons
+    grid_map = {
+        f"{p[0].item():.6f},{p[1].item():.6f}": i 
+        for i, p in enumerate(grid_tensor)
+    }
 
-    # 2. Fit each model and calculate error/stats
-    model_data_list = [] # Renamed from errors_and_stats
+    # Iterate through the GT dataframe and place outcomes in the correct grid slot
+    points_mapped = 0
+    for _, row in gt_df.iterrows():
+        x, y = row['x'], row['y']
+        outcome = row['continuous_outcome']
+        key = f"{x:.6f},{y:.6f}"
+        
+        if key in grid_map:
+            index = grid_map[key]
+            mean_gt_flat[index] = outcome
+            points_mapped += 1
+        else:
+            # This can happen if the GT data was made with a different grid
+            print(f"    Warning: GT point (x={x}, y={y}) not found in {grid_resolution}x{grid_resolution} grid.")
+
+    print(f"    Successfully mapped {points_mapped} GT points to the grid.")
+    if points_mapped == 0:
+        print("Error: No GT points matched the grid. Check --grid_resolution.")
+        return
+
+    # Reshape the flat array to the 2D grid
+    mean_gt = mean_gt_flat.reshape(grid_shape)
+
+
+    # 2. Fit each model and calculate error/stats (This block is unchanged)
+    model_data_list = []
     for label, df in results_list:
         X_model, Y_model = _get_tensors_from_df(df)
         if len(X_model) < 1:
@@ -546,27 +437,30 @@ def plot_comparison(
                 mean_tensor_model = mean_tensor_model.mean(dim=0)
                 
             mean_model_flat = mean_tensor_model.numpy()
+            # We use the valid_mask_flat here to mask out the model's predictions
+            # in the same invalid regions as the GT.
             mean_model_flat[~valid_mask_flat] = np.nan
             mean_model = mean_model_flat.reshape(grid_shape)
 
-        # Store the mean map
+        # Calculate error metrics regardless of plot_mode
+        # This works because both mean_model and mean_gt have NaNs
+        # in the same invalid locations.
+        error_map = np.abs(mean_model - mean_gt)
+        mae = np.nanmean(error_map) # MAE only over valid areas
+        print(f"    Valid Area MAE ({label}): {mae:.4f}")
+        
+        # Store the data
         stats_dict = {
             'label': label,
             'n': len(X_model),
-            'mean_map': mean_model # Always store the mean map
+            'mean_map': mean_model,
+            'error_map': error_map,
+            'mae': mae
         }
         
-        # Only calculate error if in 'error' mode
-        if plot_mode == 'error':
-            error_map = np.abs(mean_model - mean_gt)
-            mae = np.nanmean(error_map) # MAE only over valid areas
-            print(f"    Valid Area MAE ({label}): {mae:.4f}")
-            stats_dict['error_map'] = error_map
-            stats_dict['mae'] = mae
-
         model_data_list.append(stats_dict)
 
-    # 3. Plotting
+    # 3. Plotting (This block is unchanged)
     num_models = len(model_data_list)
     num_plots = num_models + 1 # +1 for GT
 
@@ -634,7 +528,10 @@ def plot_comparison(
                 cmap=cmap_gt, vmin=0, vmax=4, aspect='equal' # Use GT cmap and scale
             )
             fig.colorbar(im, ax=ax, label='Predicted Outcome (Mean)')
-            ax.set_title(f"{stats['label']} Model Mean (N={stats['n']})")
+            ax.set_title(
+                f"{stats['label']} Model Mean (N={stats['n']})\n"
+                f"Valid Area MAE = {stats['mae']:.4f}"
+            )
             
         # Common axis setup
         ax.set_xlabel('X Position')
@@ -650,20 +547,21 @@ def plot_comparison(
         mean_gt, origin='lower', extent=plot_extent, 
         cmap=cmap_gt, vmin=0, vmax=4, aspect='equal'
     )
-    fig.colorbar(im_gt, ax=ax_gt, label='Predicted Outcome (Mean)')
-    ax_gt.set_title(f'Ground Truth Model ({model_name}, N={len(X_gt)})')
+    fig.colorbar(im_gt, ax=ax_gt, label='Actual Outcome (Mean)')
+    ax_gt.set_title(f'Ground Truth Data (N={points_mapped})') # Use points_mapped
     ax_gt.set_xlabel('X Position')
     if num_models == 0:
         ax_gt.set_ylabel('Y Position')
     ax_gt.set_xlim(plot_extent[0], plot_extent[1])
     ax_gt.set_ylim(plot_extent[2], plot_extent[3])
 
-    plt.suptitle(f'Model Comparison vs. Ground Truth (N={len(X_gt)})', fontsize=16, y=0.96)
+    plt.suptitle(f'Model Comparison vs. Ground Truth (N={points_mapped})', fontsize=16, y=0.96)
     plt.tight_layout(rect=[0, 0.03, 1, 0.93])
 
     plt.savefig(output_file, bbox_inches='tight')
     plt.close()
     print(f"Saved figure to {output_file}.")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Visualization script for evaluation results.")
@@ -673,7 +571,7 @@ def main():
     # --- Command: plot-points ---
     parser_points = subparsers.add_parser('plot-points', help='Plot tested points colored by outcome')
     parser_points.add_argument('--results_file', type=str, required=True, help='Path to the evaluation_results.csv file')
-    parser_points.add_argument('--output_file', type=str, default='visualizations/tested_points.png', help='Output file path for the plot')
+    parser_points.add_argument('--output_file', type=str, default='visualizations/robo_eval/tested_points.png', help='Output file path for the plot')
 
     # --- Command: plot-active ---
     parser_active = subparsers.add_parser('plot-active', help='Plot active learning diagnostics (model mean, acqf)')
@@ -681,13 +579,13 @@ def main():
         "--grid_resolution", type=int, default=10, help="The resolution (N) for the N_x_N grid."
     )
     parser_active.add_argument('--results_file', type=str, required=True, help='Path to the active_results.csv file')
-    parser_active.add_argument('--output_file', type=str, default='visualizations/active_plots.png', help='Output file path for the plot')
+    parser_active.add_argument('--output_file', type=str, default='visualizations/robo_eval/active_plots.png', help='Output file path for the plot')
     parser_active.add_argument(
-        '--model_name', type=str, default='SaasFullyBayesianSingleTaskGP', 
+        '--model_name', type=str, default='SingleTaskGP', 
         help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
     )
     parser_active.add_argument(
-        '--acq_func_name', type=str, default='qBALD', help='Name of acq func (e.g. UCB, qNIPV, qBALD)'
+        '--acq_func_name', type=str, default='PSD', help='Name of acq func (e.g. PSD, qNIPV, qBALD)'
     )
 
     # --- Command: animate-active ---
@@ -697,13 +595,13 @@ def main():
     )
     parser_animate.add_argument('--results_file', type=str, required=True, help='Path to the active_results.csv file')
     parser_animate.add_argument('--interval', type=int, default=500, help='Delay between frames in milliseconds.')
-    parser_animate.add_argument('--output_file', type=str, default='visualizations/active_animation.mp4', help='Output file path for the animation (.mp4)')
+    parser_animate.add_argument('--output_file', type=str, default='visualizations/robo_eval/active_animation.mp4', help='Output file path for the animation (.mp4)')
     parser_animate.add_argument(
-        '--model_name', type=str, default='SaasFullyBayesianSingleTaskGP', 
+        '--model_name', type=str, default='SingleTaskGP', 
         help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
     )
     parser_animate.add_argument(
-        '--acq_func_name', type=str, default='qBALD', help='Name of acq func (e.g. UCB, qNIPV, qBALD)'
+        '--acq_func_name', type=str, default='PSD', help='Name of acq func (e.g. PSD, qNIPV, qBALD)'
     )
 
     # --- Command: plot-comparison ---
@@ -712,21 +610,21 @@ def main():
         "--grid_resolution", type=int, default=10, help="The resolution (N) for the N_x_N grid."
     )
     parser_compare.add_argument(
-        '--gt', type=str, required=True, help='Path to the ground_truth_results.csv file (M samples)'
+        '--gt_results_file', type=str, required=True, help='Path to the ground_truth_results.csv file (M samples)'
     )
     parser_compare.add_argument(
-        '--model', action='append', nargs=2, metavar=('LABEL', 'FILEPATH'),
-        help='Add a model to compare. Can be used multiple times. E.g., --model Active active.csv'
+        '--add_results_file', action='append', nargs=2, metavar=('LABEL', 'FILEPATH'),
+        help='Add a results file to compare. E.g., --add_results_file Active active.csv'
     )
     parser_compare.add_argument(
-        '--output_file', type=str, default='visualizations/comparison_plot.png', help='Output file path for the plot'
+        '--output_file', type=str, default='visualizations/robo_eval/comparison_plot.png', help='Output file path for the plot'
     )
     parser_compare.add_argument(
-        '--model_name', type=str, default='SaasFullyBayesianSingleTaskGP', 
+        '--model_name', type=str, default='SingleTaskGP', 
         help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
     )
     parser_compare.add_argument(
-        '--plot_mode', type=str, choices=['error', 'mean'], default='error',
+        '--plot_mode', type=str, choices=['error', 'mean'], default='mean',
         help="Type of plot to generate: 'error' (vs GT) or 'mean' (model output)"
     )
     
@@ -753,12 +651,12 @@ def main():
         animate_active_learning(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name, args.interval)
 
     elif args.command == 'plot-comparison':
-        gt_df = _load_data(args.gt)
+        gt_df = _load_data(args.gt_results_file)
         results_list = []
-        if not args.model:
-            print("Warning: No --model files provided for comparison.")
+        if not args.add_results_file:
+            print("Warning: No --add_results_file files provided for comparison.")
         else:
-            for label, filepath in args.model:
+            for label, filepath in args.add_results_file:
                 df = _load_data(filepath)
                 results_list.append((label, df))
         plot_comparison(results_list, gt_df, args.output_file, args.grid_resolution, args.model_name, args.plot_mode)
