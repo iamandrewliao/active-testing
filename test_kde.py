@@ -76,4 +76,10 @@ kde_result, train_data = fit_density_estimator(csv_path)
 
 if kde_result is not None:
     # Plot the KDE and the data
-    plot_kde(kde_result, train_data, save_path=plot_save_path)
+    # plot_kde(kde_result, train_data, save_path=plot_save_path)
+    
+    test_point = np.array([[.9], [.1]])
+    density_at_point = kde_result(test_point)
+    
+    print("\n--- KDE Evaluation ---")
+    print(f"Density at test point {test_point.T[0]}: {density_at_point[0]:.4f}")

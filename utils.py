@@ -29,7 +29,7 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
     """
     # print(f"Fitting {model_name} model with {train_X.shape[0]} points...")
     input_transform = Normalize(d=train_X.shape[-1], bounds=bounds) # normalizes X to [0, 1]^d
-    outcome_transform=Standardize(m=1) # standardizes Y to have zero mean and unit variance
+    outcome_transform = Standardize(m=1) # standardizes Y to have zero mean and unit variance
     if model_name=="SingleTaskGP" or model_name == "I-BNN": # infinite-width BNN is just a GP with a special kernel
         if model_name == "SingleTaskGP":
             kernel = None
@@ -233,18 +233,106 @@ def run_evaluation(point, max_steps):
     return binary_outcome, continuous_outcome, steps_taken
 
 
-def fit_density_estimator(csv_path):
+def load_vla_data(vla_data_path):
     """
-    Loads x,y data from a CSV and fits a Kernel Density Estimator.
+    Loads VLA training data from a CSV file.
+    Returns a (N, 2) tensor of x,y coordinates.
     """
-    print(f"Loading prior training distribution from {csv_path}...")
-    df = pd.read_csv(csv_path)
-    # Take x and y columns
-    train_data = df[['x', 'y']].values
+    if vla_data_path is None:
+        return None
+    print(f"Loading VLA training distribution from {vla_data_path}...")
+    try:
+        df = pd.read_csv(vla_data_path)
+        # Convert to tensor immediately
+        vla_tensor = torch.tensor(df[['x', 'y']].values, dtype=torch.double)
+        return vla_tensor
+    except Exception as e:
+        print(f"Error loading VLA data: {e}")
+        return None
+
+
+def compute_knn_distance(target_points, reference_points, k=1):
+    """
+    Computes the distance from each point in target_points to its 
+    k-th nearest neighbor in reference_points.
     
-    # gaussian_kde expects data shape (dims, num_points)
-    kde = gaussian_kde(train_data.T)
-    return kde
+    Args:
+        target_points: (N, 2) tensor of points to evaluate
+        reference_points: (M, 2) tensor of VLA training data
+        k: Which neighbor to use (default 1 = nearest neighbor)
+        
+    Returns:
+        (N, 1) tensor of distances
+    """
+    # Compute pairwise distances: (N, M) matrix
+    # efficient distance calculation: ||a-b||^2 = ||a||^2 + ||b||^2 - 2<a,b>
+    # or just use cdist for simplicity and robustness
+    dists = torch.cdist(target_points, reference_points)
+    
+    # Get the k-th smallest distance for each target point
+    # topk returns the largest, so we negate or sort. 
+    # For small k, topk(largest=False) is best.
+    values, _ = torch.topk(dists, k=k, dim=1, largest=False)
+    
+    # The last column of values is the k-th nearest neighbor distance
+    # shape (N, k), we want the k-th one (index k-1)
+    kth_dist = values[:, -1].unsqueeze(1) # Shape (N, 1)
+    
+    return kth_dist
+
+# Sklearn version
+# def compute_knn_distance(target_points, reference_points, k=1):
+#     """
+#     Computes the distance from each point in target_points to its 
+#     k-th nearest neighbor in reference_points.
+    
+#     Args:
+#         target_points: (N, 2) tensor of points to evaluate
+#         reference_points: (M, 2) tensor of VLA training data
+#         k: Which neighbor to use (default 1 = nearest neighbor)
+        
+#     Returns:
+#         (N, 1) tensor of distances
+#     """
+#     from sklearn.neighbors import NearestNeighbors
+#     # sklearn expects numpy arrays
+#     # Ensure inputs are on CPU before converting
+#     target_np = target_points.detach().cpu().numpy()
+#     ref_np = reference_points.detach().cpu().numpy()
+    
+#     # Fit the NearestNeighbors model on the reference points (VLA data)
+#     # algorithm='auto' will choose the best algorithm (KDTree, BallTree, or Brute)
+#     nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(ref_np)
+    
+#     # Find k-nearest neighbors for the target points
+#     # distances will be shape (N, k), indices will be (N, k)
+#     distances, _ = nbrs.kneighbors(target_np)
+    
+#     # We want the distance to the k-th neighbor (the last column)
+#     kth_dist_np = distances[:, -1]
+    
+#     # Convert back to tensor, matching the device/dtype of the input
+#     kth_dist = torch.tensor(
+#         kth_dist_np, 
+#         dtype=target_points.dtype, 
+#         device=target_points.device
+#     ).unsqueeze(1) # Shape (N, 1)
+    
+#     return kth_dist
+
+
+def compute_kde_density(target_points, reference_points):
+    """
+    Computes KDE density estimates for target_points based on reference_points.
+    """    
+    # Convert to numpy for scipy and transpose because gaussian_kde expects (dims, N)
+    ref_np = reference_points.cpu().numpy().T 
+    target_np = target_points.cpu().numpy().T
+    
+    kde = gaussian_kde(ref_np)
+    densities = kde(target_np)
+    # Convert back to tensor (N, 1)
+    return torch.tensor(densities, dtype=target_points.dtype, device=target_points.device).unsqueeze(1)
 
 
 def parse_args():
@@ -309,6 +397,19 @@ def parse_args():
         '--acq_func_name',
         type=str,
         help="Acquisition function to use (e.g. 'qBALD')."
+    )
+    parser.add_argument(
+        '--vla_data_path',
+        type=str,
+        default=None,
+        help="Path to CSV containing VLA training data (factor values) that help compute OOD metrics on eval data."
+    )
+    parser.add_argument(
+        '--ood_metric',
+        type=str,
+        choices=['knn', 'kde'],
+        default='knn',
+        help="Metric to use for the OOD feature (distance to nearest neighbor or density)."
     )
 
     args = parser.parse_args()

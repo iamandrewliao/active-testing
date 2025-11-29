@@ -12,13 +12,13 @@ import numpy as np
 import torch
 import time
 
-from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_func, fit_density_estimator
+from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_func, load_vla_data, compute_knn_distance, compute_kde_density
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points, model_name, acq_func_name, train_factors_path=None):
+    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points, model_name, acq_func_name, vla_data_path=None, ood_metric="knn"):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
@@ -32,9 +32,28 @@ class ActiveTester:
         else:
             self.mc_points = mc_points
         self.available_design_space = self.grid_points.clone()
-        self.kde = None # used to add likelihood feature to surrogate (likelihood of drawing evaluation factor f from the training data distribution)
-        if train_factors_path: # a .csv path that contains factor values of the training data as columns
-            self.kde = fit_density_estimator(train_factors_path)
+        self.vla_points = load_vla_data(vla_data_path) # contains factor values of the training data as columns
+        if self.vla_points is not None:
+            self.vla_points = self.vla_points.to(**tkwargs)
+        self.ood_metric = ood_metric # likelihood of drawing evaluation factor combo f from the training data distribution
+    
+    def add_feature(self, points):
+        """
+        Manually adds the OOD feature (distance or density) to a set of points.
+        """
+        if self.vla_points is None:
+            return points
+        if self.ood_metric == "knn":
+            # Calculate distance to nearest VLA neighbor
+            feature = compute_knn_distance(points, self.vla_points, k=1)
+        elif self.ood_metric == "kde":
+            # Calculate probability density
+            feature = compute_kde_density(points, self.vla_points)
+        else:
+            # Fallback or unknown metric, return unaugmented
+            return points
+        # Concatenate [points, feature]
+        return torch.cat([points, feature], dim=-1)
 
     def get_next_point(self):
         """
@@ -44,20 +63,42 @@ class ActiveTester:
         print(f"Fitting surrogate model {self.model_name}")
         start_time = time.time()
 
-        if self.kde:
-            X_np = self.train_X.detach().cpu().numpy() # convert tensor to numpy for scipy
-            # Calculate density (kde expects shape (2, N))
-            densities = self.kde(X_np.T)
-            # Convert back to Tensor (N, 1)
-            density_tensor = torch.tensor(densities, **tkwargs).unsqueeze(-1)
-            # Concatenate: (N, 2) + (N, 1) -> (N, 3)
-            self.train_X = torch.cat([self.train_X, density_tensor], dim=-1)
+        # Augment the evaluation points (train_X) with the OOD feature
+        train_X_final = self.train_X
+        bounds_final = self.bounds
+        if self.vla_points is not None:
+            train_X_final = self.add_feature(self.train_X)
+            # We need to update bounds for the feature.
+            # We can calculate the feature on the grid to find the max range.
+            with torch.no_grad():
+                grid_features = self.add_feature(self.grid_points)[:, -1] # get just the feature col
+                max_val = grid_features.max().item()
+                min_val = grid_features.min().item()
+            # Bounds: x=[0,1], y=[0,1], feature=[min, max*buffer]
+            # Expanding slightly helps avoid edge effects in optimization
+            # buffer = 1.1
+            # feature_bounds = torch.tensor([[min_val], [max_val * buffer]], **tkwargs)
+            feature_bounds = torch.tensor([[min_val], [max_val]], **tkwargs)
+            bounds_final = torch.cat([self.bounds, feature_bounds], dim=1)
+        else:
+            train_X_final = self.train_X
+            bounds_final = self.bounds
 
-        self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name=self.model_name)
+        self.model = fit_surrogate_model(train_X_final, self.train_Y, bounds_final, model_name=self.model_name)
 
         print(f"Optimizing acquisition function {self.acq_func_name}")
-        self.acq_func = get_acquisition_function(model=self.model, acq_func_name=self.acq_func_name, mc_points=self.mc_points)
-        acquired_point = optimize_acq_func(acq_func=self.acq_func, design_space=self.available_design_space, discrete=True, normalized_bounds=None)
+        # We must also augment the design space so it matches the model's expected input size
+        design_space_input = self.available_design_space
+        mc_points_input = self.mc_points
+
+        if self.vla_points is not None:
+            design_space_input = self._augment_data(self.available_design_space)
+            if self.mc_points is not None:
+                mc_points_input = self._augment_data(self.mc_points)
+
+        self.acq_func = get_acquisition_function(model=self.model, acq_func_name=self.acq_func_name, mc_points=mc_points_input)
+        acquired_point_aug = optimize_acq_func(acq_func=self.acq_func, design_space=design_space_input, discrete=True, normalized_bounds=None)
+        acquired_point = acquired_point_aug[:2] # just return the factor values
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")

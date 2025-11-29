@@ -107,7 +107,9 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points, mc_points=None, model_name=args.model_name, acq_func_name=args.acq_func_name)
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points, mc_points=None, 
+                                   model_name=args.model_name, acq_func_name=args.acq_func_name,
+                                   vla_data_path=args.vla_data_path, ood_metric=args.ood_metric)
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
             sampler = IIDSampler(grid_points)
@@ -131,7 +133,9 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points, mc_points=None, model_name=args.model_name, acq_func_name=args.acq_func_name)
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points, mc_points=None, 
+                                   model_name=args.model_name, acq_func_name=args.acq_func_name,
+                                   vla_data_path=args.vla_data_path, ood_metric=args.ood_metric)
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
 
