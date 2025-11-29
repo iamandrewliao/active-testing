@@ -9,14 +9,14 @@ from testers import ActiveTester, IIDSampler, ListIteratorSampler
 from utils import is_valid_point, run_evaluation, parse_args, get_grid_points
 import os  # Added for checking file existence
 
-tkwargs = {"dtype": torch.double, "device": "cpu"}
+tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
+# Define the search space bounds for our factors [x, y]
+BOUNDS = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
 
 def main(args):
     """Main execution loop."""
     if args.mode == 'brute_force' and args.num_evals:
         print("Note: --num_evals is ignored in 'brute_force' mode; evaluating all grid points instead.")
-    # Define the search space bounds for our factors [x, y]
-    BOUNDS = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
     
     # --- Generate discrete grid points (if needed) ---
     # This grid is used by 'iid', 'brute_force', and 'active' modes.

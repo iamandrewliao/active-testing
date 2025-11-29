@@ -1,5 +1,6 @@
 import torch
 import argparse
+import pandas as pd
 
 from botorch.models.transforms import Normalize, Standardize
 from botorch.models import SingleTaskGP
@@ -17,6 +18,9 @@ from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearning
 from botorch.optim import optimize_acqf, optimize_acqf_discrete
 
 from scipy.stats import wasserstein_distance
+from scipy.stats import gaussian_kde
+
+from EfficientEval import fit_mdn_model, MDN_BALD
 
 
 def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
@@ -56,6 +60,8 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
             outcome_transform=outcome_transform
         )
         fit_fully_bayesian_model_nuts(model)
+    elif model_name == "MDN":
+        model = fit_mdn_model(train_X, train_Y, bounds)
     return model
 
 
@@ -71,6 +77,8 @@ def get_acquisition_function(model, acq_func_name, mc_points=None):
         )
     elif acq_func_name == "qBALD":
         acq_func = qBayesianActiveLearningByDisagreement(model=model)
+    elif acq_func_name == "MDN_BALD":
+        acq_func = MDN_BALD(model=model)
     else:
         raise ValueError(f"Unknown acq_func_name: {acq_func_name}")
     
@@ -126,7 +134,7 @@ def calculate_log_likelihood(model, X_test, Y_test):
         # This is equivalent to logsumexp(log_p) - log(S)
         num_samples = log_probs.shape[0]
         # Average over the N test points
-        mean_log_pred_density = torch.logsumexp(log_probs, dim=0).mean() - torch.log(torch.tensor(num_samples, **tkwargs))
+        mean_log_pred_density = torch.logsumexp(log_probs, dim=0).mean() - torch.log(torch.tensor(num_samples))
         return mean_log_pred_density.item()
     else: # SingleTaskGP case [N]
         return log_probs.mean().item() # Just average over test points
@@ -223,6 +231,20 @@ def run_evaluation(point, max_steps):
                 print("Invalid input. Please enter a number.")
             
     return binary_outcome, continuous_outcome, steps_taken
+
+
+def fit_density_estimator(csv_path):
+    """
+    Loads x,y data from a CSV and fits a Kernel Density Estimator.
+    """
+    print(f"Loading prior training distribution from {csv_path}...")
+    df = pd.read_csv(csv_path)
+    # Take x and y columns
+    train_data = df[['x', 'y']].values
+    
+    # gaussian_kde expects data shape (dims, num_points)
+    kde = gaussian_kde(train_data.T)
+    return kde
 
 
 def parse_args():

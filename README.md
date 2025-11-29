@@ -34,7 +34,7 @@ uv run viz.py animate-active --results_file results/active_results.csv --output_
 uv run viz.py plot-comparison --grid_resolution 11 --gt_results_file results/bf_results.csv --add_results_file Active results/active_results.csv --add_results_file IID results/iid_results.csv --output_file visualizations/robo_eval/comparison_bf_active_iid.png --model_name SingleTaskGP --plot_mode mean
 ```
 **Note:** The grid_resolution should be a multiple of the resolution used during eval.
-- [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods (to be developed))
+- [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
 uv run next_data_to_collect.py
 ```
@@ -42,4 +42,3 @@ uv run next_data_to_collect.py
 ```
 uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
 ```
-**Note:** Make sure to change ActiveTester.get_next_point() in [./testers.py](./testers.py) first

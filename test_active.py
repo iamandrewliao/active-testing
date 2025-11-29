@@ -16,7 +16,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 # Set up torch device and data type
-tkwargs = {"dtype": torch.double, "device": "cpu"}
+tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 # We'll use the Branin test function (negated, so we maximize)
 true_function = Branin(negate=True)

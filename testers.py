@@ -8,22 +8,17 @@ https://botorch.org/docs/overview
 https://botorch.readthedocs.io/en/latest/index.html
 '''
 import pandas as pd
+import numpy as np
 import torch
 import time
 
-from botorch.acquisition.analytic import UpperConfidenceBound
-from botorch.acquisition.active_learning import qNegIntegratedPosteriorVariance
-from botorch.sampling.normal import SobolQMCNormalSampler
-from botorch.acquisition.bayesian_active_learning import qBayesianActiveLearningByDisagreement
-from botorch.optim import optimize_acqf, optimize_acqf_discrete
-
-from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_func
+from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_func, fit_density_estimator
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points, model_name, acq_func_name):
+    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points, model_name, acq_func_name, train_factors_path=None):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
@@ -37,6 +32,9 @@ class ActiveTester:
         else:
             self.mc_points = mc_points
         self.available_design_space = self.grid_points.clone()
+        self.kde = None # used to add likelihood feature to surrogate (likelihood of drawing evaluation factor f from the training data distribution)
+        if train_factors_path: # a .csv path that contains factor values of the training data as columns
+            self.kde = fit_density_estimator(train_factors_path)
 
     def get_next_point(self):
         """
@@ -45,6 +43,16 @@ class ActiveTester:
         """
         print(f"Fitting surrogate model {self.model_name}")
         start_time = time.time()
+
+        if self.kde:
+            X_np = self.train_X.detach().cpu().numpy() # convert tensor to numpy for scipy
+            # Calculate density (kde expects shape (2, N))
+            densities = self.kde(X_np.T)
+            # Convert back to Tensor (N, 1)
+            density_tensor = torch.tensor(densities, **tkwargs).unsqueeze(-1)
+            # Concatenate: (N, 2) + (N, 1) -> (N, 3)
+            self.train_X = torch.cat([self.train_X, density_tensor], dim=-1)
+
         self.model = fit_surrogate_model(self.train_X, self.train_Y, self.bounds, model_name=self.model_name)
 
         print(f"Optimizing acquisition function {self.acq_func_name}")
