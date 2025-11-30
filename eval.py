@@ -6,12 +6,13 @@ import torch
 import math
 from testers import ActiveTester, IIDSampler, ListIteratorSampler
 
-from utils import is_valid_point, run_evaluation, parse_args, get_grid_points
+from utils import is_valid_point, run_evaluation, parse_args, get_design_points
 import os  # Added for checking file existence
 
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
-# Define the search space bounds for our factors [x, y]
+# Define the search space bounds for our factors e.g. x, y, table height, etc.
 BOUNDS = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
+DIMS = BOUNDS.shape[1]
 
 def main(args):
     """Main execution loop."""
@@ -23,7 +24,7 @@ def main(args):
     grid_points = None
     if args.mode in ['iid', 'brute_force', 'active']:
         # 1. Generate the full grid based on --grid_resolution
-        all_grid_points = get_grid_points(args.grid_resolution, BOUNDS, tkwargs)
+        all_grid_points = get_design_points(args.grid_resolution, BOUNDS, tkwargs)
         
         # 2. Filter the grid to get the valid "brute-force" pool
         valid_points_list = [p for p in all_grid_points if is_valid_point(p)]
@@ -103,7 +104,17 @@ def main(args):
     elif args.mode == 'active':
         if loop_start_index >= args.num_init_pts:
             print(f"Resuming in 'active' mode with {loop_start_index} points.")
-            initial_X_tensors = [torch.tensor([row['x'], row['y']], **tkwargs) for row in results_data]
+            initial_X_list = []
+            for row in results_data:
+                if 'factor_0' in row:
+                    pt = [row[f'factor_{d}'] for d in range(DIMS)]
+                elif 'x' in row and 'y' in row and DIMS == 2: # Legacy support
+                    pt = [row['x'], row['y']]
+                else:
+                    raise ValueError(f"Could not find {DIMS} factor columns in results.")
+                initial_X_list.append(torch.tensor(pt, **tkwargs))
+
+            initial_X_tensors = initial_X_list
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
@@ -129,7 +140,17 @@ def main(args):
             print(f"Reached {args.num_init_pts} initial points. Switching to Active Testing.")
             print("="*50 + "\n")
             
-            initial_X_tensors = [torch.tensor([row['x'], row['y']], **tkwargs) for row in results_data]
+            initial_X_list = []
+            for row in results_data:
+                if 'factor_0' in row:
+                    pt = [row[f'factor_{d}'] for d in range(DIMS)]
+                elif 'x' in row and 'y' in row and DIMS == 2: # Legacy support
+                    pt = [row['x'], row['y']]
+                else:
+                    raise ValueError(f"Could not find {DIMS} factor columns in results.")
+                initial_X_list.append(torch.tensor(pt, **tkwargs))
+
+            initial_X_tensors = initial_X_list
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
@@ -177,13 +198,14 @@ def main(args):
         results_data.append({
             'trial': i + 1,
             'mode': current_mode,
-            'x': point[0].item(),
-            'y': point[1].item(),
-            'orientation': None,
             'binary_outcome': binary_outcome,
             'continuous_outcome': continuous_outcome,
             'steps_taken': steps_taken,
         })
+        # Dynamically save all factors (e.g. x, y, table height, lighting, etc.)
+        for dim_idx in range(point.shape[0]):
+            # can add some number->name mapping so it doesn't just say factor_1, factor_2, etc.
+            results_data[f'factor_{dim_idx}'] = point[dim_idx].item()
         
         # Save current results
         results_df = pd.DataFrame(results_data)
@@ -195,7 +217,12 @@ def main(args):
     # --- Save generated points if requested ---
     if args.save_points:
         final_df = pd.DataFrame(results_data)
-        points_df = final_df[['x', 'y']]
+        # Select columns that start with 'factor_' or fallback to x,y
+        cols_to_save = [c for c in final_df.columns if c.startswith('factor_')]
+        if not cols_to_save and 'x' in final_df.columns:
+            cols_to_save = ['x', 'y']
+            
+        points_df = final_df[cols_to_save]
         points_df.to_csv(args.save_points, index=False)
         print(f"💾 Evaluation points saved to '{args.save_points}'.")
 

@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 # We'll use the Branin test function (negated, so we maximize)
-true_function = Branin(negate=True)
+true_function = Branin(negate=True).to(**tkwargs)
 # The Branin function is defined on bounds: [-5, 10] x [0, 15]
 BOUNDS = torch.tensor([[-5.0, 0.0], [10.0, 15.0]], **tkwargs)
 
@@ -83,34 +83,6 @@ def create_test_set(num_sim_points):
     })
     print(f"Generated {num_sim_points} test points...")
     return test_df
-
-
-# def run_loop(sampler, sampler_mode, true_function, num_trials):
-#     """
-#     Runs a mock evaluation loop, "testing" points against the true function
-#     and feeding the results back into the sampler.
-#     Returns a DataFrame of the newly sampled points.
-#     """    
-#     sampled_data = []
-    
-#     # Run the main loop
-#     for i in tqdm(range(num_trials), desc=f"Running {sampler_mode} trials"):
-#         # 1. Get the next point to test
-#         next_pt = sampler.get_next_point()
-#         # 2. Evaluate the point w/ the test function
-#         outcome = true_function(next_pt).view(-1)
-#         # 3. Update the sampler with the new data
-#         sampler.update(next_pt, outcome) # e.g. adds to active sampler's training data
-#         # 4. Store the result
-#         sampled_data.append({
-#             'trial': N_INIT + i + 1,
-#             'mode': sampler_mode,
-#             'x1': next_pt[0].item(),
-#             'x2': next_pt[1].item(),
-#             'y': outcome.item(),
-#         })
-        
-#     return pd.DataFrame(sampled_data)
 
 
 def calculate_metrics(model, X_test, Y_test):
@@ -188,6 +160,19 @@ if __name__ == "__main__":
         default=512,
         help="Number of simulated points to sample from."
     )
+    parser.add_argument(
+        '--vla_data_path',
+        type=str,
+        default=None,
+        help="Path to CSV containing VLA training data (factor values) that help compute OOD metrics on eval data."
+    )
+    parser.add_argument(
+        '--ood_metric',
+        type=str,
+        choices=['knn', 'kde'],
+        default='knn',
+        help="Metric to use for the OOD feature (distance to nearest neighbor or density)."
+    )
     args = parser.parse_args()
 
     print("--- Starting Active Learning Test on Simulated Data ---")
@@ -245,7 +230,9 @@ if __name__ == "__main__":
         # 3. Update the sampler's data (does not refit)
         active_sampler.update(next_pt, outcome)
         # 4. Calculate metrics using the model that was just fit inside get_next_point()
-        rmse, ll, wd = calculate_metrics(active_sampler.model, X_test, Y_test)
+        # Augment X_test with the same feature used during training
+        X_test_aug = active_sampler.add_feature(X_test)
+        rmse, ll, wd = calculate_metrics(active_sampler.model, X_test_aug, Y_test)
         active_results.append({
             "sampler": 'active',
             "trial": i+1,

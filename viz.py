@@ -11,7 +11,7 @@ import os
 # Import necessary BoTorch/GPyTorch components
 from botorch.utils.sampling import draw_sobol_samples
 
-from utils import get_grid_points, is_valid_point, fit_surrogate_model, get_acquisition_function, optimize_acq_func
+from utils import get_design_points, is_valid_point, fit_surrogate_model, get_acquisition_function, optimize_acq_func
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
@@ -98,7 +98,7 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
     acq_func = get_acquisition_function(model=model, acq_func_name=acq_func_name, mc_points=mc_points)
 
     # 3. Create grid and evaluate
-    grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
+    grid_tensor = get_design_points(grid_resolution, BOUNDS, tkwargs)
     grid_shape = (grid_resolution, grid_resolution)
     
     # --- Create the validity mask ---
@@ -222,7 +222,7 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
     else:
         plot_extent = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
     
-    grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
+    grid_tensor = get_design_points(grid_resolution, BOUNDS, tkwargs)
     grid_shape = (grid_resolution, grid_resolution)
     normalized_bounds = torch.tensor([[0.0] * 2, [1.0] * 2], **tkwargs)
     
@@ -373,7 +373,7 @@ def plot_comparison(
     print(f"Generating comparison plot (Mode: {plot_mode}, Model: {model_name}) -> {output_file}...")
 
     # --- Create grid and validity mask ---
-    grid_tensor = get_grid_points(grid_resolution, BOUNDS, tkwargs)
+    grid_tensor = get_design_points(grid_resolution, BOUNDS, tkwargs)
     grid_shape = (grid_resolution, grid_resolution)
     # This mask is still needed for the *model* plots
     valid_mask_flat = np.array([is_valid_point(p) for p in grid_tensor])

@@ -22,7 +22,7 @@ class ActiveTester:
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
-        self.grid_points = grid_points
+        self.grid_points = grid_points # immutable design choices
         self.model_name = model_name
         self.acq_func_name = acq_func_name
         self.model = None
@@ -31,7 +31,7 @@ class ActiveTester:
             self.mc_points = self.grid_points # integrate over entire design space (no sampling)
         else:
             self.mc_points = mc_points
-        self.available_design_space = self.grid_points.clone()
+        self.available_design_space = self.grid_points.clone() # mutable design choices (reduces in size with each sample)
         self.vla_points = load_vla_data(vla_data_path) # contains factor values of the training data as columns
         if self.vla_points is not None:
             self.vla_points = self.vla_points.to(**tkwargs)
@@ -92,13 +92,14 @@ class ActiveTester:
         mc_points_input = self.mc_points
 
         if self.vla_points is not None:
-            design_space_input = self._augment_data(self.available_design_space)
+            design_space_input = self.add_feature(self.available_design_space)
             if self.mc_points is not None:
-                mc_points_input = self._augment_data(self.mc_points)
+                mc_points_input = self.add_feature(self.mc_points)
 
         self.acq_func = get_acquisition_function(model=self.model, acq_func_name=self.acq_func_name, mc_points=mc_points_input)
         acquired_point_aug = optimize_acq_func(acq_func=self.acq_func, design_space=design_space_input, discrete=True, normalized_bounds=None)
-        acquired_point = acquired_point_aug[:2] # just return the factor values
+        num_factors = self.bounds.shape[1]
+        acquired_point = acquired_point_aug[:num_factors] # just return the factor values (assuming they come first)
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
@@ -147,11 +148,17 @@ class ListIteratorSampler:
             print(f"Loading evaluation points from {filepath}...")
             try:
                 df = pd.read_csv(filepath)
-                if not {'x', 'y'}.issubset(df.columns):
-                    raise ValueError("CSV file must contain 'x' and 'y' columns.")
+                # Look for 'factor_0', 'factor_1'... otherwise 'x', 'y'
+                factor_cols = [c for c in df.columns if c.startswith('factor_')]
+                if not factor_cols:
+                    if {'x', 'y'}.issubset(df.columns):
+                        factor_cols = ['x', 'y']
+                    else:
+                        raise ValueError("CSV file must contain 'factor_N' columns or 'x' and 'y'.")
                 
-                # Convert directly to a single [N, 2] tensor
-                points_np = df[['x', 'y']].values
+                print(f"identified factor columns: {factor_cols}")
+                # Convert directly to a single [N, D] tensor
+                points_np = df[factor_cols].values
                 self.points = torch.tensor(points_np, **tkwargs)
                 
             except FileNotFoundError:

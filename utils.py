@@ -155,24 +155,25 @@ def calculate_wasserstein_distance(model, X_test, Y_test):
     
     return wasserstein_distance(y_true_np, y_pred_np)
 
-def get_grid_points(resolution, bounds, tkwargs):
+def get_design_points(resolution, bounds, tkwargs):
     """
-    Creates a tensor of all points on a uniform N_x_N grid.
-    
-    Returns:
-        torch.Tensor: A tensor of shape [resolution*resolution, 2]
+    Creates a tensor of all points on a uniform grid for arbitrary N dimensions.
+    bounds: [2, D] tensor
     """
-    x_lin = torch.linspace(bounds[0, 0], bounds[1, 0], resolution, **tkwargs)
-    y_lin = torch.linspace(bounds[0, 1], bounds[1, 1], resolution, **tkwargs)
+    dims = bounds.shape[1]
     
-    # Use torch.meshgrid
-    grid_y, grid_x = torch.meshgrid(y_lin, x_lin, indexing='ij')
+    # Generate linspace for each dimension
+    # bounds[0, d] is the min of dimension d, bounds[1, d] is the max
+    linspaces = [torch.linspace(bounds[0, d], bounds[1, d], resolution, **tkwargs) for d in range(dims)]
     
-    # Stack and reshape to get [N*N, 2]
-    grid_tensor = torch.stack([grid_x, grid_y], dim=-1)
-    all_points = grid_tensor.reshape(-1, 2)
+    # Create meshgrid (indexing='ij' ensures correct order for n-dims)
+    grids = torch.meshgrid(*linspaces, indexing='ij')
     
-    print(f"Generated {all_points.shape[0]} total grid points ({resolution}x{resolution}).")
+    # Stack and reshape to get [N^D, D]
+    grid_tensor = torch.stack(grids, dim=-1)
+    all_points = grid_tensor.reshape(-1, dims)
+    
+    print(f"Generated {all_points.shape[0]} total grid points across {dims} dimensions.")
     return all_points
 
 
@@ -193,9 +194,10 @@ def run_evaluation(point, max_steps):
     Simulates a robot evaluation trial for a given point.
     Prompts the user for the outcome.
     """
-    x, y = point[0].item(), point[1].item()
+    # Create a string representation of the point coordinates
+    coords_str = ", ".join([f"{val:.3f}" for val in point.tolist()])
     print("-" * 30)
-    print(f"🤖 Running trial at position: (x={x:.3f}, y={y:.3f})")
+    print(f"🤖 Running trial at position: ({coords_str})")
     
     # --- Get continuous outcome ---
     while True:
@@ -236,15 +238,26 @@ def run_evaluation(point, max_steps):
 def load_vla_data(vla_data_path):
     """
     Loads VLA training data from a CSV file.
-    Returns a (N, 2) tensor of x,y coordinates.
+    Returns a (N, D) tensor.
     """
     if vla_data_path is None:
         return None
     print(f"Loading VLA training distribution from {vla_data_path}...")
     try:
         df = pd.read_csv(vla_data_path)
-        # Convert to tensor immediately
-        vla_tensor = torch.tensor(df[['x', 'y']].values, dtype=torch.double)
+        
+        # Try to find factor columns
+        factor_cols = [c for c in df.columns if c.startswith('factor_')]
+        if not factor_cols:
+            if {'x', 'y'}.issubset(df.columns):
+                factor_cols = ['x', 'y']
+            else:
+                # If no standard names, assume all columns are factors? 
+                # Or raise error. Let's assume all numeric columns for flexibility or error.
+                # Safer to raise error to enforce schema.
+                raise ValueError("VLA CSV must have 'factor_N' or 'x','y' columns.")
+
+        vla_tensor = torch.tensor(df[factor_cols].values, dtype=torch.double)
         return vla_tensor
     except Exception as e:
         print(f"Error loading VLA data: {e}")
