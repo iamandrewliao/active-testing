@@ -27,7 +27,7 @@ class MLP(nn.Module):
         return mean, var
 
 
-def train_ensemble(models, X, y, epochs=500, lr=0.01):
+def train_ensemble(models, train_X, train_Y, bounds=None, epochs=500, lr=0.01):
     """
     Trains each model in the list independently.
     """
@@ -35,18 +35,22 @@ def train_ensemble(models, X, y, epochs=500, lr=0.01):
     
     # Gaussian NLL Loss: L = 0.5 * (log(var) + (y - mean)^2 / var)
     loss_fn = nn.GaussianNLLLoss()
+
+    # Normalize inputs for training if bounds provided
+    if bounds is not None:
+        # Ensure bounds match X's device and dtype
+        bounds = bounds.to(train_X.device, dtype=train_X.dtype)
+        train_X = (train_X - bounds[0]) / (bounds[1] - bounds[0])
     
     for i, (model, optimizer) in enumerate(zip(models, optimizers)):
         model.train()
         for epoch in range(epochs):
             optimizer.zero_grad()
-            mean, var = model(X)
+            mean, var = model(train_X)
             # GaussianNLLLoss expects variance, not std dev
-            loss = loss_fn(mean, y, var)
+            loss = loss_fn(mean, train_Y, var)
             loss.backward()
             optimizer.step()
-        print(f"Model {i+1} finished. Final Loss: {loss.item():.4f}")
-
 
 def predict_ensemble(models, X_test):
     """
@@ -82,3 +86,55 @@ def predict_ensemble(models, X_test):
     total_var = avg_var + var_of_means
     # Return mean and standard deviation (sqrt of variance)
     return ensemble_mean, torch.sqrt(total_var)
+
+# Additional code to integrate with BoTorch
+from botorch.models.model import Model
+from botorch.posteriors import Posterior
+
+class EnsemblePosterior(Posterior):
+    """Custom Posterior for Deep Ensemble."""
+    def __init__(self, mean, variance):
+        self._mean = mean
+        self._variance = variance
+
+    @property
+    def mean(self):
+        return self._mean
+    @property
+    def variance(self):
+        return self._variance
+    @property
+    def device(self):
+        return self._mean.device
+    @property
+    def dtype(self):
+        return self._mean.dtype
+    
+    def rsample(self, sample_shape=torch.Size(), base_samples=None):
+        # Simple Gaussian sampling approximation for qNIPV compatibility
+        # Shape: sample_shape x batch_shape x q x m
+        shape = sample_shape + self._mean.shape
+        eps = torch.randn(shape, device=self.device, dtype=self.dtype)
+        return self._mean + torch.sqrt(self._variance) * eps
+
+class DeepEnsembleWrapper(Model):
+    def __init__(self, models, bounds):
+        super().__init__()
+        self.models = torch.nn.ModuleList(models)
+        self.register_buffer("bounds", bounds)
+        self._num_outputs = 1
+
+    def forward(self, x):
+        # Normalize inputs to [0,1]
+        x_norm = (x - self.bounds[0]) / (self.bounds[1] - self.bounds[0])
+        return predict_ensemble(self.models, x_norm)
+
+    def posterior(self, X, observation_noise=False, **kwargs):
+        # X shape: (batch_shape, q, d)
+        mean, std = self.forward(X)
+        # BoTorch expects variance, not std in posterior
+        return EnsemblePosterior(mean, std.pow(2))
+    
+    @property
+    def num_outputs(self):
+        return self._num_outputs

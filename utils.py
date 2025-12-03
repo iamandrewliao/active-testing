@@ -20,7 +20,8 @@ from botorch.optim import optimize_acqf, optimize_acqf_discrete
 from scipy.stats import wasserstein_distance
 from scipy.stats import gaussian_kde
 
-from EfficientEval import fit_mdn_model, MDN_BALD
+from EfficientEval import train_mdn, MDNWrapper, MDN_BALD
+from DeepEnsemble import train_ensemble, MLP, DeepEnsembleWrapper
 
 
 def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
@@ -61,7 +62,12 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
         )
         fit_fully_bayesian_model_nuts(model)
     elif model_name == "MDN":
-        model = fit_mdn_model(train_X, train_Y, bounds)
+        model = train_mdn(train_X, train_Y, bounds)
+        model = MDNWrapper(model, bounds)
+    elif model_name == "DeepEnsemble":
+        models = [MLP(train_X.shape[-1], 64, 0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
+        train_ensemble(models, train_X, train_Y, bounds, epochs=200)
+        model = DeepEnsembleWrapper(models, bounds)        
     return model
 
 

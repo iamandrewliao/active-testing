@@ -5,6 +5,10 @@ MLP that takes in factor values and returns Mixture of Gaussians distribution pa
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from botorch.posteriors import Posterior
+from botorch.models.model import Model
+from botorch.acquisition.acquisition import AcquisitionFunction
+import math
 
 OUTCOME_RANGE = (0, 4)
 
@@ -38,27 +42,66 @@ class MDN(nn.Module):
         sigma = F.softplus(sigma_raw) + 1e-6
         return pi, mu, sigma
 
-# Model Wrapper
-class MDNWrapper(nn.Module):
-    """
-    A simple wrapper that normalizes the model inputs.
-    """
+class MDNPosterior(Posterior):
+    def __init__(self, mean, variance):
+        self._mean = mean
+        self._variance = variance
+
+    @property
+    def mean(self):
+        return self._mean
+
+    @property
+    def variance(self):
+        return self._variance
+    
+    @property
+    def device(self):
+        return self._mean.device
+
+    @property
+    def dtype(self):
+        return self._mean.dtype
+
+    def rsample(self, sample_shape=torch.Size(), base_samples=None):
+        # Approximate sampling using the single Gaussian moment-matched statistics
+        shape = sample_shape + self._mean.shape
+        eps = torch.randn(shape, device=self.device, dtype=self.dtype)
+        return self._mean + torch.sqrt(self._variance) * eps
+
+class MDNWrapper(Model): # Inherit from BoTorch Model
     def __init__(self, model, bounds):
         super().__init__()
         self.model = model
-        # Registering bounds as a buffer ensures they move to GPU 
-        # automatically when you call .to('cuda') on this object.
         self.register_buffer("bounds", bounds)
+        self._num_outputs = 1 # Required by BoTorch
 
     def forward(self, x):
         # Normalize inputs automatically
         x_norm = (x - self.bounds[0]) / (self.bounds[1] - self.bounds[0])
         return self.model(x_norm)
 
+    @property
+    def num_outputs(self):
+        return self._num_outputs
+
+    def posterior(self, X, observation_noise=False, **kwargs):
+        # 1. Forward pass (returns mixture params)
+        pi, mu, sigma = self.forward(X)
+        
+        # 2. Moment Matching: Convert Mixture -> Single Gaussian
+        # Mixture Mean = sum(pi * mu)
+        mixture_mean = torch.sum(pi * mu, dim=-1, keepdim=True)
+        
+        # Mixture Variance = sum(pi * (sigma^2 + mu^2)) - mixture_mean^2
+        # (Law of total variance)
+        second_moment = torch.sum(pi * (sigma**2 + mu**2), dim=-1, keepdim=True)
+        mixture_var = second_moment - mixture_mean**2
+        
+        # 3. Return BoTorch Posterior
+        return MDNPosterior(mixture_mean, mixture_var)
 
 # MDN Helper Functions
-import math
-
 def mdn_loss(pi, mu, sigma, target):
     """
     Computes Negative Log Likelihood (NLL) for Gaussian Mixture.
@@ -80,40 +123,29 @@ def mdn_loss(pi, mu, sigma, target):
     
     return -torch.mean(log_mix_prob)
 
+def train_mdn(model, train_X, train_Y, bounds=None, num_epochs=200, lr=0.01):
+    """
+    Trains the MDN model. 
+    Similar to train_ensemble, this handles normalization internally 
+    so the raw model learns on scaled data [0, 1].
+    """
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    
+    # Normalize inputs for training if bounds provided
+    if bounds is not None:
+        # Ensure bounds match X's device and dtype
+        bounds = bounds.to(train_X)
+        train_X = (train_X - bounds[0]) / (bounds[1] - bounds[0])
 
-def fit_mdn_model(train_X, train_Y, bounds, num_epochs=200, lr=0.01, hidden_dim=64, components=2):
-    """
-    Trains the MDN surrogate model.
-    Uses K=2 components as suggested in the paper.
-    """
-    device = train_X.device
-    bounds = bounds.to(device)
-    
-    # Initialize model
-    input_dim = train_X.shape[-1]
-    
-    # The paper uses K=2 components
-    model = MDN(input_dim=input_dim, hidden_dim=hidden_dim, n_components=components)
-    model.to(device)
-    
-    # Wrap it to handle normalization automatically
-    wrapped_model = MDNWrapper(model, bounds)
-    
-    optimizer = torch.optim.Adam(wrapped_model.parameters(), lr=lr)
-    
-    # Simple full-batch training loop
-    wrapped_model.train()
+    model.train()
     for epoch in range(num_epochs):
         optimizer.zero_grad()
-        # forward pass via wrapper (normalizes X)
-        pi, mu, sigma = wrapped_model(train_X)
+        # Forward pass on raw model with normalized data
+        pi, mu, sigma = model(train_X)
         loss = mdn_loss(pi, mu, sigma, train_Y)
         loss.backward()
         optimizer.step()
-        
-    return wrapped_model
-
-from botorch.acquisition.acquisition import AcquisitionFunction
+    model.eval()
 
 class MDN_BALD(AcquisitionFunction):
     def __init__(self, model, num_dropout_samples=10, num_bins=25, outcome_range=OUTCOME_RANGE):
@@ -135,7 +167,8 @@ class MDN_BALD(AcquisitionFunction):
         self.num_bins = num_bins
         
         # Grid: Shape [Bins]
-        y_grid = torch.linspace(outcome_range[0], outcome_range[1], num_bins)
+        tkwargs = {"device": model.bounds.device, "dtype": model.bounds.dtype}
+        y_grid = torch.linspace(outcome_range[0], outcome_range[1], num_bins, **tkwargs)
         self.register_buffer("y_grid", y_grid)
         self.delta_y = self.y_grid[1] - self.y_grid[0]
 
