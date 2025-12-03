@@ -157,7 +157,7 @@ def calculate_wasserstein_distance(model, X_test, Y_test):
 
 def get_design_points(resolution, bounds, tkwargs):
     """
-    Creates a tensor of all points on a uniform grid for arbitrary N dimensions.
+    Creates a tensor of all points for arbitrary D dimensions.
     bounds: [2, D] tensor
     """
     dims = bounds.shape[1]
@@ -167,18 +167,18 @@ def get_design_points(resolution, bounds, tkwargs):
     linspaces = [torch.linspace(bounds[0, d], bounds[1, d], resolution, **tkwargs) for d in range(dims)]
     
     # Create meshgrid (indexing='ij' ensures correct order for n-dims)
-    grids = torch.meshgrid(*linspaces, indexing='ij')
+    dims_linspaces = torch.meshgrid(*linspaces, indexing='ij')
     
     # Stack and reshape to get [N^D, D]
-    grid_tensor = torch.stack(grids, dim=-1)
-    all_points = grid_tensor.reshape(-1, dims)
+    design_space_tensor = torch.stack(dims_linspaces, dim=-1)
+    all_points = design_space_tensor.reshape(-1, dims)
     
-    print(f"Generated {all_points.shape[0]} total grid points across {dims} dimensions.")
+    print(f"Generated {all_points.shape[0]} total design points across {dims} dimensions.")
     return all_points
 
-
+# CHANGE FOR YOUR SETUP
 def is_valid_point(point):
-    """Automatically filters out any point past Lightning's reachability (approximated by a straight line)"""
+    """Automatically filters out any point past my UR5 arm's reachability (approximated by a straight line)"""
     # Equation of the boundary line: y = 1.35x - 0.475
     # A point is 'invalid' if it's on the right side of the line
     x, y = point[0].item(), point[1].item()
@@ -360,10 +360,10 @@ def parse_args():
         help="The sampling strategy to use."
     )
     parser.add_argument(
-        "--grid_resolution",
+        "--resolution",
         type=int,
         default=10,
-        help="The resolution (N) for the N_x_N grid in 'brute_force' or 'iid' mode."
+        help="The resolution (N) for the N^D design space in 'brute_force' or 'iid' mode."
     )
     parser.add_argument(
         "--num_evals",

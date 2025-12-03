@@ -17,26 +17,26 @@ DIMS = BOUNDS.shape[1]
 def main(args):
     """Main execution loop."""
     if args.mode == 'brute_force' and args.num_evals:
-        print("Note: --num_evals is ignored in 'brute_force' mode; evaluating all grid points instead.")
+        print("Note: --num_evals is ignored in 'brute_force' mode; evaluating full design space instead.")
     
-    # --- Generate discrete grid points (if needed) ---
-    # This grid is used by 'iid', 'brute_force', and 'active' modes.
-    grid_points = None
+    # --- Generate full design space (if needed) ---
+    # This space of evaluation points is used by 'iid', 'brute_force', and 'active' modes.
+    points = None
     if args.mode in ['iid', 'brute_force', 'active']:
-        # 1. Generate the full grid based on --grid_resolution
-        all_grid_points = get_design_points(args.grid_resolution, BOUNDS, tkwargs)
+        # 1. Generate full design space based on --resolution
+        all_points = get_design_points(args.resolution, BOUNDS, tkwargs)
         
-        # 2. Filter the grid to get the valid "brute-force" pool
-        valid_points_list = [p for p in all_grid_points if is_valid_point(p)]
+        # 2. Filter design space to get the valid "brute-force" pool of points
+        valid_points_list = [p for p in all_points if is_valid_point(p)]
         
         if not valid_points_list:
-            print(f"Error: No valid points found in the {args.grid_resolution}x{args.grid_resolution} grid.")
-            print("Check your 'is_valid_point' function or increase --grid_resolution.")
+            print(f"Error: No valid points found in the {args.resolution}^D design space.")
+            print("Check your 'is_valid_point' function or increase --resolution.")
             exit()
             
-        grid_points = torch.stack(valid_points_list)
-        pool_size = grid_points.shape[0]
-        print(f"Filtered grid from {all_grid_points.shape[0]} total points to {pool_size} valid points (this is the 'brute-force' pool).")
+        points = torch.stack(valid_points_list)
+        pool_size = points.shape[0]
+        print(f"Filtered design space from {all_points.shape[0]} total points to {pool_size} valid points (this is the 'brute-force' pool).")
 
         # 3. Set or check num_evals based on the mode
         if args.mode == 'brute_force':
@@ -46,7 +46,7 @@ def main(args):
             print(f"{args.mode} mode: Running {args.num_evals} trials, sampling from the {pool_size}-point pool.")
             if args.num_evals > pool_size:
                 print(f"Error: num_evals ({args.num_evals}) cannot be larger than the valid point pool size ({pool_size}).")
-                print("Increase --grid_resolution or decrease --num_evals.")
+                print("Increase --resolution or decrease --num_evals.")
                 exit()
 
     results_data = []
@@ -87,19 +87,19 @@ def main(args):
         
         print(f"⏯️  Running evaluation for {args.num_evals - loop_start_index} remaining loaded points.")
     elif args.mode == 'brute_force':
-        sampler = ListIteratorSampler(grid_points)
+        sampler = ListIteratorSampler(points)
 
         if loop_start_index > 0:
-            print(f"Skipping the first {loop_start_index} points from the grid.")
+            print(f"Skipping the first {loop_start_index} points from the design space.")
             sampler.index = loop_start_index
         
         if loop_start_index >= args.num_evals:
-            print("All grid points have already been evaluated. Exiting.")
+            print("All points have already been evaluated. Exiting.")
             return
         
-        print(f"⏯️  Running evaluation for {args.num_evals - loop_start_index} remaining grid points.")
+        print(f"⏯️  Running evaluation for {args.num_evals - loop_start_index} remaining points.")
     elif args.mode == 'iid':
-        sampler = IIDSampler(grid_points)
+        sampler = IIDSampler(points)
         
     elif args.mode == 'active':
         if loop_start_index >= args.num_init_pts:
@@ -118,12 +118,12 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points, mc_points=None, 
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None, 
                                    model_name=args.model_name, acq_func_name=args.acq_func_name,
                                    vla_data_path=args.vla_data_path, ood_metric=args.ood_metric)
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
-            sampler = IIDSampler(grid_points)
+            sampler = IIDSampler(points)
 
     # --- Main Evaluation Loop ---
     print(f"\n--- Starting main evaluation loop ---")
@@ -154,7 +154,7 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, grid_points, mc_points=None, 
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None, 
                                    model_name=args.model_name, acq_func_name=args.acq_func_name,
                                    vla_data_path=args.vla_data_path, ood_metric=args.ood_metric)
 
@@ -171,7 +171,7 @@ def main(args):
         
         # --- Robust validity check ---
         while not is_valid_point(point):
-            print(f"Point (x={point[0]:.3f}, y={point[1]:.3f}) is not valid -> handling...")
+            print(f"Point {point.tolist()} is not valid -> handling...")
             if args.mode in ['loaded', 'brute_force']:
                 print(f"Error: The loaded point from trial {i+1} is invalid. Please check your source file.")
                 print("Stopping evaluation.")
@@ -179,7 +179,7 @@ def main(args):
             elif current_mode == 'active':
                 # Fall back to a single random sample for this trial to avoid an infinite loop
                 print("Warning: Active learner suggested an invalid point. Falling back to IID sampling for this one trial.")
-                point = IIDSampler(grid_points).get_next_point()
+                point = IIDSampler(points).get_next_point()
                 # This will loop again if the *random* point is also invalid, which is fine.
             else: 
                 # This is 'iid' or 'initial_random'
@@ -195,18 +195,19 @@ def main(args):
         sampler.update(point, new_y_tensor)
         
         # Record the results
-        results_data.append({
+        entry = {
             'trial': i + 1,
             'mode': current_mode,
             'binary_outcome': binary_outcome,
             'continuous_outcome': continuous_outcome,
             'steps_taken': steps_taken,
-        })
+        }
         # Dynamically save all factors (e.g. x, y, table height, lighting, etc.)
         for dim_idx in range(point.shape[0]):
             # can add some number->name mapping so it doesn't just say factor_1, factor_2, etc.
-            results_data[f'factor_{dim_idx}'] = point[dim_idx].item()
-        
+            entry[f'factor_{dim_idx}'] = point[dim_idx].item()
+        results_data.append(entry)
+
         # Save current results
         results_df = pd.DataFrame(results_data)
         results_df.to_csv(args.output_file, index=False)

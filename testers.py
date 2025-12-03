@@ -18,30 +18,31 @@ from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_fu
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, grid_points, mc_points, model_name, acq_func_name, vla_data_path=None, ood_metric="knn"):
+    def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name, vla_data_path=None, ood_metric="knn"):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
-        self.grid_points = grid_points # immutable design choices
+        self.full_design_space = full_design_space # immutable design choices
         self.model_name = model_name
         self.acq_func_name = acq_func_name
         self.model = None
         self.acq_func = None
         if mc_points is None:
-            self.mc_points = self.grid_points # integrate over entire design space (no sampling)
+            self.mc_points = self.full_design_space # integrate over entire design space (no sampling)
         else:
             self.mc_points = mc_points
-        self.available_design_space = self.grid_points.clone() # mutable design choices (reduces in size with each sample)
+        self.available_design_space = self.full_design_space.clone() # mutable design choices (reduces in size with each sample)
         self.vla_points = load_vla_data(vla_data_path) # contains factor values of the training data as columns
         if self.vla_points is not None:
             self.vla_points = self.vla_points.to(**tkwargs)
-        self.ood_metric = ood_metric # likelihood of drawing evaluation factor combo f from the training data distribution
+        self.ood_metric = ood_metric # some measure of likelihood of drawing evaluation factor combo f from the training data distribution
     
     def add_feature(self, points):
         """
-        Manually adds the OOD feature (distance or density) to a set of points.
+        Adds the OOD feature (distance or density) to a set of points (factor values).
         """
         if self.vla_points is None:
+            print("No VLA metadata provided, returning unaugmented points.")
             return points
         if self.ood_metric == "knn":
             # Calculate distance to nearest VLA neighbor
@@ -51,6 +52,7 @@ class ActiveTester:
             feature = compute_kde_density(points, self.vla_points)
         else:
             # Fallback or unknown metric, return unaugmented
+            print("No OOD metric specified, returning unaugmented points.")
             return points
         # Concatenate [points, feature]
         return torch.cat([points, feature], dim=-1)
@@ -69,11 +71,11 @@ class ActiveTester:
         if self.vla_points is not None:
             train_X_final = self.add_feature(self.train_X)
             # We need to update bounds for the feature.
-            # We can calculate the feature on the grid to find the max range.
+            # We can calculate the feature on the full design space to find the max range.
             with torch.no_grad():
-                grid_features = self.add_feature(self.grid_points)[:, -1] # get just the feature col
-                max_val = grid_features.max().item()
-                min_val = grid_features.min().item()
+                full_design_space_features = self.add_feature(self.full_design_space)[:, -1] # get just the feature col
+                max_val = full_design_space_features.max().item()
+                min_val = full_design_space_features.min().item()
             # Bounds: x=[0,1], y=[0,1], feature=[min, max*buffer]
             # Expanding slightly helps avoid edge effects in optimization
             # buffer = 1.1
@@ -87,7 +89,7 @@ class ActiveTester:
         self.model = fit_surrogate_model(train_X_final, self.train_Y, bounds_final, model_name=self.model_name)
 
         print(f"Optimizing acquisition function {self.acq_func_name}")
-        # We must also augment the design space so it matches the model's expected input size
+        # We must likewise augment the available design space (same as full design space but without the already-sampled points)
         design_space_input = self.available_design_space
         mc_points_input = self.mc_points
 
@@ -98,8 +100,9 @@ class ActiveTester:
 
         self.acq_func = get_acquisition_function(model=self.model, acq_func_name=self.acq_func_name, mc_points=mc_points_input)
         acquired_point_aug = optimize_acq_func(acq_func=self.acq_func, design_space=design_space_input, discrete=True, normalized_bounds=None)
+        # Just return the factor values for the acquired point (assuming they come first)
         num_factors = self.bounds.shape[1]
-        acquired_point = acquired_point_aug[:num_factors] # just return the factor values (assuming they come first)
+        acquired_point = acquired_point_aug[:num_factors]
         
         end_time = time.time()
         print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
@@ -116,18 +119,18 @@ class ActiveTester:
 
 class IIDSampler:
     """
-    A sampler that samples *with replacement* from a discrete grid of points.
+    A sampler that samples *with replacement* from the full_design_space.
     """
-    def __init__(self, grid_points):
-        self.grid_points = grid_points
-        self.num_points = self.grid_points.shape[0]
+    def __init__(self, full_design_space):
+        self.full_design_space = full_design_space
+        self.num_points = self.full_design_space.shape[0]
         # print(f"Initialized IIDSampler with {self.num_points} discrete points.")
 
     def get_next_point(self):
-        """Generates a new point by sampling uniformly from the grid."""
+        """Generates a new point by sampling uniformly from the full design space."""
         # Randomly select an index
         idx = torch.randint(low=0, high=self.num_points, size=(1,)).item()
-        point = self.grid_points[idx]
+        point = self.full_design_space[idx]
         return point
     
     def update(self, new_x, new_y):

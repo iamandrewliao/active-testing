@@ -69,7 +69,7 @@ def plot_kde(kde, data, save_path='kde_plot.png'):
     plt.figure(figsize=(10, 8))
     # Plot original points
     plt.plot(data[:, 0], data[:, 1], 'o', color='red', markersize=3, 
-             alpha=0.5, label='Original Data Points')
+             alpha=1.0, label='Original Data Points')
     # Plot the KDE as filled contours (density map)
     # Store the contour object returned by contourf 
     # and use its mapping for the colorbar.

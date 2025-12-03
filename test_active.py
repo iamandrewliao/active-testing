@@ -41,7 +41,7 @@ def simulate_data(num_sim_points, num_init):
         seed=1  # Make it reproducible
     ).squeeze(1) # Squeeze from [N, q, D] to shape [N, D]
     
-    # 2. Evaluate the true function on all grid points
+    # 2. Evaluate the true function on full design space
     with torch.no_grad():
         true_Y = true_function(sim_pts).view(-1) # shape [N]
 
@@ -211,7 +211,7 @@ if __name__ == "__main__":
         "w_dist": wd,
     })
 
-    # Initialize the testers (CHANGE TESTERS.PY TO SWITCH ACTIVE TESTING COMPONENTS)
+    # Initialize the testers
     # Sample points "to use for MC-integrating the posterior variance. Usually, these are qMC samples on the whole design space"
     # (required by qNIPV)
     mc_points = draw_sobol_samples(
@@ -230,7 +230,7 @@ if __name__ == "__main__":
         # 3. Update the sampler's data (does not refit)
         active_sampler.update(next_pt, outcome)
         # 4. Calculate metrics using the model that was just fit inside get_next_point()
-        # Augment X_test with the same feature used during training
+        # Augment X_test with the same feature(s) used during training
         X_test_aug = active_sampler.add_feature(X_test)
         rmse, ll, wd = calculate_metrics(active_sampler.model, X_test_aug, Y_test)
         active_results.append({

@@ -11,8 +11,9 @@ I have included the following acquisition functions and surrogate models:
 | qBALD         | Fully Bayesian models e.g. FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP |
 | qNIPV, PSD    | Any                                                                                 |
 ## Key files
-- [./testers.py](./testers.py): Implements the logic for active testing, iid testing, loading points, etc.
+- [./testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
 - [./utils.py](./utils.py): Helper functions
+    - Note: is_valid_point() is highly setup-dependent and will most likely need to be adjusted. 
 - [./eval.py](./eval.py): Main evaluation script, run alongside robot policy deployment (TO DO: don't train model in every other script (viz.py, etc.), just use trained model from evaluation)
 
 Example run commands:
