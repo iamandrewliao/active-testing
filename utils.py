@@ -199,10 +199,10 @@ def is_valid_point(point):
 
 def run_evaluation(point, max_steps):
     """
-    Simulates a robot evaluation trial for a given point.
+    Simulates a robot evaluation trial for a given point (a combination of factor values).
     Prompts the user for the outcome.
     """
-    # Create a string representation of the point coordinates
+    # Create a string representation of the point "coordinates" aka factor values
     coords_str = ", ".join([f"{val:.3f}" for val in point.tolist()])
     print("-" * 30)
     print(f"🤖 Running trial at position: ({coords_str})")
