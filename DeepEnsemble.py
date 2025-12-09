@@ -5,18 +5,29 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.distributions import Normal, Categorical, MixtureSameFamily
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dim, dropout_prob):
+    def __init__(self, input_dim, hidden_dim, dropout_prob, n_hidden_layers=2):
         super().__init__()
-        self.layers = nn.Sequential(
+        
+        # 1. Start with the input layer
+        layers_list = [
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=dropout_prob),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
             nn.Dropout(p=dropout_prob)
-        )
+        ]
+        
+        # 2. Add n_hidden_layers - 1 additional hidden layers
+        # The original code had 2 hidden layers, so we repeat the pattern n_hidden_layers - 1 times
+        for _ in range(n_hidden_layers - 1):
+            layers_list.extend([
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(p=dropout_prob)
+            ])
+            
+        self.layers = nn.Sequential(*layers_list)
         self.mean_head = nn.Linear(hidden_dim, 1)
         self.var_head = nn.Linear(hidden_dim, 1)
     
@@ -52,50 +63,48 @@ def train_ensemble(models, train_X, train_Y, bounds=None, epochs=500, lr=0.01):
             loss.backward()
             optimizer.step()
 
-def predict_ensemble(models, X_test):
-    """
-    Combines predictions from multiple models.
-    Returns ensemble mean and total uncertainty (standard deviation).
-    """
-    means_list = []
-    vars_list = []
-    
-    with torch.no_grad():
-        for model in models:
-            model.eval()
-            mean, var = model(X_test)
-            means_list.append(mean)
-            vars_list.append(var)
-    
-    # Shape: (Ensemble_Size, N_Samples, 1)
-    means = torch.stack(means_list)
-    vars = torch.stack(vars_list)
-    
-    # Combination
-    # 1. Ensemble mean: avg of individual means
-    # E[y] = (1/M) * sum(mu_m)
-    ensemble_mean = means.mean(dim=0)
-    # 2. Ensemble variance: 
-    # Var(y) = (1/M) * sum(var_m + mu_m^2) - E[y]^2
-    # This captures both aleatoric (avg data noise) and epistemic (disagreement between models) uncertainty.
-    # Mean of variances (aleatoric)
-    avg_var = vars.mean(dim=0)
-    # Variance of means (epistemic)
-    var_of_means = means.var(dim=0, unbiased=False)
-    # Total variance
-    total_var = avg_var + var_of_means
-    # Return mean and standard deviation (sqrt of variance)
-    return ensemble_mean, torch.sqrt(total_var)
-
 # Additional code to integrate with BoTorch
 from botorch.models.model import Model
 from botorch.posteriors import Posterior
 
 class EnsemblePosterior(Posterior):
     """Custom Posterior for Deep Ensemble."""
-    def __init__(self, mean, variance):
-        self._mean = mean
-        self._variance = variance
+    def __init__(self, means, variances):
+        """
+        Args:
+            means: [M, batch_shape, 1]
+            variances: [M, batch_shape, 1]
+        """
+        # 1. Moment Matching for BoTorch Acquisition Functions (The part you were missing)
+        # E[y] = 1/M * sum(mu)
+        self._mean = means.mean(dim=0) 
+        
+        # Var(y) = 1/M sum(sigma^2 + mu^2) - E[y]^2
+        avg_var = variances.mean(dim=0)
+        var_of_means = means.var(dim=0, unbiased=False)
+        self._variance = avg_var + var_of_means
+
+        # 2. Create Mixture Distribution for Log Likelihood Evaluation
+        # Transpose to [batch_shape, M] for distribution components
+        # Remove the last output dimension (which is 1)
+        means_squeezed = means.squeeze(-1)       # [M, batch_shape...]
+        vars_squeezed = variances.squeeze(-1)    # [M, batch_shape...]
+        
+        # Move the ensemble dimension (0) to the end (-1)
+        batch_means = means_squeezed.movedim(0, -1)      # [batch_shape..., M]
+        batch_sigmas = vars_squeezed.sqrt().movedim(0, -1) # [batch_shape..., M]
+        
+        # Create probabilities matching the batch shape
+        # shape: [batch_shape..., M]
+        batch_shape = batch_means.shape[:-1]
+        M = batch_means.shape[-1]
+        probs = torch.ones(*batch_shape, M, device=means.device) / M
+        
+        mix = Categorical(probs=probs)
+        comp = Normal(batch_means, batch_sigmas)
+        
+        # This allows .log_prob() to work correctly on the mixture
+        self.distribution = MixtureSameFamily(mix, comp)
 
     @property
     def mean(self):
@@ -125,15 +134,29 @@ class DeepEnsembleWrapper(Model):
         self._num_outputs = 1
 
     def forward(self, x):
-        # Normalize inputs to [0,1]
+        # Normalize inputs
         x_norm = (x - self.bounds[0]) / (self.bounds[1] - self.bounds[0])
-        return predict_ensemble(self.models, x_norm)
+        return self._predict_individual(x_norm)
+
+    def _predict_individual(self, x):
+        """Returns predictions from all models: [M, batch, 1]"""
+        means_list = []
+        vars_list = []
+        # No grad needed for posterior/prediction usually
+        with torch.no_grad():
+            for model in self.models:
+                model.eval()
+                m, v = model(x)
+                means_list.append(m)
+                vars_list.append(v)
+        
+        return torch.stack(means_list), torch.stack(vars_list)
 
     def posterior(self, X, observation_noise=False, **kwargs):
         # X shape: (batch_shape, q, d)
-        mean, std = self.forward(X)
-        # BoTorch expects variance, not std in posterior
-        return EnsemblePosterior(mean, std.pow(2))
+        # We need individual model predictions, NOT the aggregated one
+        means, vars = self.forward(X)
+        return EnsemblePosterior(means, vars)
     
     @property
     def num_outputs(self):

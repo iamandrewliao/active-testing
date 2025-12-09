@@ -4,12 +4,14 @@
 I have included the following acquisition functions and surrogate models:
 | Acq. function     | Surrogate models                                                                                           |
 |-------------------|------------------------------------------------------------------------------------------------------------|
-| qBALD, qNIPV, PSD | SingleTaskGP, I-BNN (Infinite-Width Bayesian NN), FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP |
+| qBALD, qNIPV, PSD | SingleTaskGP, I-BNN (Infinite-Width Bayesian NN), FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP, MDN, DeepEnsemble |
+
 ### Compatibility
 | Acq. function | Models that work                                                                    |
 |---------------|-------------------------------------------------------------------------------------|
 | qBALD         | Fully Bayesian models e.g. FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP |
 | qNIPV, PSD    | Any                                                                                 |
+| MDN_BALD | MDN |
 ## Key files
 - [./testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
 - [./utils.py](./utils.py): Helper functions

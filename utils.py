@@ -20,7 +20,7 @@ from botorch.optim import optimize_acqf, optimize_acqf_discrete
 from scipy.stats import wasserstein_distance
 from scipy.stats import gaussian_kde
 
-from EfficientEval import train_mdn, MDNWrapper, MDN_BALD
+from EfficientEval import MDN, train_mdn, MDNWrapper, MDN_BALD
 from DeepEnsemble import train_ensemble, MLP, DeepEnsembleWrapper
 
 
@@ -62,10 +62,12 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
         )
         fit_fully_bayesian_model_nuts(model)
     elif model_name == "MDN":
-        model = train_mdn(train_X, train_Y, bounds)
-        model = MDNWrapper(model, bounds)
+        input_dim = train_X.shape[-1]
+        raw_model = MDN(input_dim=input_dim, hidden_dim=64, n_components=3).to(device=train_X.device, dtype=train_X.dtype)
+        train_mdn(raw_model, train_X, train_Y, bounds)
+        model = MDNWrapper(raw_model, bounds)
     elif model_name == "DeepEnsemble":
-        models = [MLP(train_X.shape[-1], 64, 0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
+        models = [MLP(train_X.shape[-1], 32, 0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
         train_ensemble(models, train_X, train_Y, bounds, epochs=200)
         model = DeepEnsembleWrapper(models, bounds)        
     return model
@@ -142,7 +144,7 @@ def calculate_log_likelihood(model, X_test, Y_test):
         # Average over the N test points
         mean_log_pred_density = torch.logsumexp(log_probs, dim=0).mean() - torch.log(torch.tensor(num_samples))
         return mean_log_pred_density.item()
-    else: # SingleTaskGP case [N]
+    else: # SingleTaskGP, DeepEnsemble case [N]
         return log_probs.mean().item() # Just average over test points
 
 

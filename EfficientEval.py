@@ -5,6 +5,7 @@ MLP that takes in factor values and returns Mixture of Gaussians distribution pa
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import Normal, Categorical, MixtureSameFamily
 from botorch.posteriors import Posterior
 from botorch.models.model import Model
 from botorch.acquisition.acquisition import AcquisitionFunction
@@ -14,19 +15,27 @@ OUTCOME_RANGE = (0, 4)
 
 # Mixture of Gaussians MLP (Mixture Density Network)
 class MDN(nn.Module):
-    def __init__(self, input_dim, hidden_dim, n_components, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, n_components, n_hidden_layers=2, dropout_prob=0.1):
         super().__init__()
         self.input_dim = input_dim
         self.n_components = n_components
         
-        self.feature_extractor = nn.Sequential(
+        # 1. Start with the input layer
+        layers_list = [
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=dropout_prob),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
             nn.Dropout(p=dropout_prob)
-        )
+        ]
+        
+        # 2. Add n_hidden_layers - 1 additional hidden layers
+        for _ in range(n_hidden_layers - 1):
+            layers_list.extend([
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(p=dropout_prob)
+            ])
+            
+        self.feature_extractor = nn.Sequential(*layers_list)
         
         self.pi_head = nn.Linear(hidden_dim, n_components)
         self.sigma_head = nn.Linear(hidden_dim, n_components)
@@ -43,9 +52,32 @@ class MDN(nn.Module):
         return pi, mu, sigma
 
 class MDNPosterior(Posterior):
-    def __init__(self, mean, variance):
-        self._mean = mean
-        self._variance = variance
+    def __init__(self, pi, mu, sigma):
+        """
+        Args:
+            pi: [batch, K]
+            mu: [batch, K]
+            sigma: [batch, K]
+        """
+        self.pi = pi
+        self.mu = mu
+        self.sigma = sigma
+        
+        # 1. Create distribution for log likelihood
+        mix = Categorical(probs=pi)
+        comp = Normal(mu, sigma)
+        self.distribution = MixtureSameFamily(mix, comp)
+
+        # 2. Moment matching for BoTorch mean/variance access
+        # Mixture mean = sum(pi * mu)
+        mixture_mean = torch.sum(pi * mu, dim=-1, keepdim=True)
+        
+        # Mixture variance = sum(pi * (sigma^2 + mu^2)) - mixture_mean^2
+        second_moment = torch.sum(pi * (sigma**2 + mu**2), dim=-1, keepdim=True)
+        mixture_var = second_moment - mixture_mean**2
+        
+        self._mean = mixture_mean
+        self._variance = mixture_var
 
     @property
     def mean(self):
@@ -89,17 +121,8 @@ class MDNWrapper(Model): # Inherit from BoTorch Model
         # 1. Forward pass (returns mixture params)
         pi, mu, sigma = self.forward(X)
         
-        # 2. Moment Matching: Convert Mixture -> Single Gaussian
-        # Mixture Mean = sum(pi * mu)
-        mixture_mean = torch.sum(pi * mu, dim=-1, keepdim=True)
-        
-        # Mixture Variance = sum(pi * (sigma^2 + mu^2)) - mixture_mean^2
-        # (Law of total variance)
-        second_moment = torch.sum(pi * (sigma**2 + mu**2), dim=-1, keepdim=True)
-        mixture_var = second_moment - mixture_mean**2
-        
-        # 3. Return BoTorch Posterior
-        return MDNPosterior(mixture_mean, mixture_var)
+        # 2. Return MDN Posterior (which handles distribution creation)
+        return MDNPosterior(pi, mu, sigma)
 
 # MDN Helper Functions
 def mdn_loss(pi, mu, sigma, target):
@@ -126,8 +149,7 @@ def mdn_loss(pi, mu, sigma, target):
 def train_mdn(model, train_X, train_Y, bounds=None, num_epochs=200, lr=0.01):
     """
     Trains the MDN model. 
-    Similar to train_ensemble, this handles normalization internally 
-    so the raw model learns on scaled data [0, 1].
+    This handles normalization internally so the raw model learns on scaled data [0, 1].
     """
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
