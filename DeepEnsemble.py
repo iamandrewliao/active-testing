@@ -38,7 +38,7 @@ class MLP(nn.Module):
         return mean, var
 
 
-def train_ensemble(models, train_X, train_Y, bounds=None, epochs=500, lr=0.01):
+def train_ensemble(models, train_X, train_Y, bounds=None, epochs=100, lr=0.01):
     """
     Trains each model in the list independently.
     """
@@ -127,10 +127,18 @@ class EnsemblePosterior(Posterior):
         return self._mean + torch.sqrt(self._variance) * eps
 
 class DeepEnsembleWrapper(Model):
-    def __init__(self, models, bounds):
+    def __init__(self, models, bounds, outcome_stats=None):
         super().__init__()
         self.models = torch.nn.ModuleList(models)
         self.register_buffer("bounds", bounds)
+        # Store mean/std buffers for un-standardizing later
+        if outcome_stats is not None:
+            self.register_buffer("y_mean", outcome_stats[0])
+            self.register_buffer("y_std", outcome_stats[1])
+        else:
+            # Default to no scaling if not provided
+            self.register_buffer("y_mean", torch.tensor(0.0))
+            self.register_buffer("y_std", torch.tensor(1.0))
         self._num_outputs = 1
 
     def forward(self, x):
@@ -149,13 +157,18 @@ class DeepEnsembleWrapper(Model):
                 m, v = model(x)
                 means_list.append(m)
                 vars_list.append(v)
-        
         return torch.stack(means_list), torch.stack(vars_list)
 
     def posterior(self, X, observation_noise=False, **kwargs):
+        # 1. Forward pass
         # X shape: (batch_shape, q, d)
-        # We need individual model predictions, NOT the aggregated one
         means, vars = self.forward(X)
+        # 2. Un-standardize them back to original scale
+        # Mean: mu_real = mu_norm * std + mean
+        means = means * self.y_std + self.y_mean
+        # Variance: var_real = var_norm * (std^2)
+        vars = vars * (self.y_std ** 2)
+        # 3. Return EnsemblePosterior
         return EnsemblePosterior(means, vars)
     
     @property

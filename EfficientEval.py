@@ -102,10 +102,16 @@ class MDNPosterior(Posterior):
         return self._mean + torch.sqrt(self._variance) * eps
 
 class MDNWrapper(Model): # Inherit from BoTorch Model
-    def __init__(self, model, bounds):
+    def __init__(self, model, bounds, outcome_stats=None):
         super().__init__()
         self.model = model
         self.register_buffer("bounds", bounds)
+        if outcome_stats is not None:
+            self.register_buffer("y_mean", outcome_stats[0])
+            self.register_buffer("y_std", outcome_stats[1])
+        else:
+            self.register_buffer("y_mean", torch.tensor(0.0))
+            self.register_buffer("y_std", torch.tensor(1.0))
         self._num_outputs = 1 # Required by BoTorch
 
     def forward(self, x):
@@ -120,8 +126,13 @@ class MDNWrapper(Model): # Inherit from BoTorch Model
     def posterior(self, X, observation_noise=False, **kwargs):
         # 1. Forward pass (returns mixture params)
         pi, mu, sigma = self.forward(X)
-        
-        # 2. Return MDN Posterior (which handles distribution creation)
+        # 2. Un-standardize
+        # pi (mixing weights) do not change.
+        # mu_real = mu_norm * std + mean
+        mu = mu * self.y_std + self.y_mean
+        # sigma_real = sigma_norm * std (Note: sigma is std dev, not variance)
+        sigma = sigma * self.y_std
+        # 3. Return MDN Posterior (which handles distribution creation)
         return MDNPosterior(pi, mu, sigma)
 
 # MDN Helper Functions
@@ -146,7 +157,7 @@ def mdn_loss(pi, mu, sigma, target):
     
     return -torch.mean(log_mix_prob)
 
-def train_mdn(model, train_X, train_Y, bounds=None, num_epochs=200, lr=0.01):
+def train_mdn(model, train_X, train_Y, bounds=None, num_epochs=100, lr=0.01):
     """
     Trains the MDN model. 
     This handles normalization internally so the raw model learns on scaled data [0, 1].

@@ -61,15 +61,23 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
             outcome_transform=outcome_transform
         )
         fit_fully_bayesian_model_nuts(model)
-    elif model_name == "MDN":
-        input_dim = train_X.shape[-1]
-        raw_model = MDN(input_dim=input_dim, hidden_dim=64, n_components=3).to(device=train_X.device, dtype=train_X.dtype)
-        train_mdn(raw_model, train_X, train_Y, bounds)
-        model = MDNWrapper(raw_model, bounds)
-    elif model_name == "DeepEnsemble":
-        models = [MLP(train_X.shape[-1], 32, 0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
-        train_ensemble(models, train_X, train_Y, bounds, epochs=200)
-        model = DeepEnsembleWrapper(models, bounds)        
+    elif model_name == "MDN" or model_name == "DeepEnsemble":
+        # Calculate statistics
+        y_mean = train_Y.mean()
+        y_std = train_Y.std()
+        if y_std < 1e-6: # Avoid division by zero if all Y are identical
+            y_std = torch.tensor(1.0, device=train_Y.device, dtype=train_Y.dtype)
+        outcome_stats = (y_mean, y_std)
+        train_Y_norm = (train_Y - y_mean) / y_std
+        if model_name == "MDN":
+            input_dim = train_X.shape[-1]
+            raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=3).to(device=train_X.device, dtype=train_X.dtype)
+            train_mdn(raw_model, train_X, train_Y_norm, bounds)
+            model = MDNWrapper(raw_model, bounds, outcome_stats=outcome_stats)
+        elif model_name == "DeepEnsemble":
+            models = [MLP(input_dim=train_X.shape[-1], hidden_dim=32, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
+            train_ensemble(models, train_X, train_Y_norm, bounds, epochs=200)
+            model = DeepEnsembleWrapper(models, bounds, outcome_stats=outcome_stats)        
     return model
 
 
@@ -245,12 +253,12 @@ def run_evaluation(point, max_steps):
 
 def load_vla_data(vla_data_path):
     """
-    Loads VLA training data from a CSV file.
+    Loads training data from a CSV file.
     Returns a (N, D) tensor.
     """
     if vla_data_path is None:
         return None
-    print(f"Loading VLA training distribution from {vla_data_path}...")
+    print(f"Loading training distribution from {vla_data_path}...")
     try:
         df = pd.read_csv(vla_data_path)
         
@@ -263,12 +271,12 @@ def load_vla_data(vla_data_path):
                 # If no standard names, assume all columns are factors? 
                 # Or raise error. Let's assume all numeric columns for flexibility or error.
                 # Safer to raise error to enforce schema.
-                raise ValueError("VLA CSV must have 'factor_N' or 'x','y' columns.")
+                raise ValueError("CSV must have 'factor_N' or 'x','y' columns.")
 
         vla_tensor = torch.tensor(df[factor_cols].values, dtype=torch.double)
         return vla_tensor
     except Exception as e:
-        print(f"Error loading VLA data: {e}")
+        print(f"Error loading training data: {e}")
         return None
 
 
@@ -431,6 +439,11 @@ def parse_args():
         choices=['knn', 'kde'],
         default='knn',
         help="Metric to use for the OOD feature (distance to nearest neighbor or density)."
+    )
+    parser.add_argument(
+        '--use_train_data_for_surrogate',
+        action='store_true',
+        help="If True, adds robot policy training points to the surrogate model training set."
     )
 
     args = parser.parse_args()

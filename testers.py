@@ -18,7 +18,7 @@ from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_fu
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name, vla_data_path=None, ood_metric="knn"):
+    def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name, vla_data_path=None, ood_metric="knn", use_train_data_for_surrogate=False):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
@@ -35,6 +35,15 @@ class ActiveTester:
         self.vla_points = load_vla_data(vla_data_path) # contains factor values of the training data as columns
         if self.vla_points is not None:
             self.vla_points = self.vla_points.to(**tkwargs)
+            if use_train_data_for_surrogate:
+                # Create Y for VLA training data
+                # (assuming the robot policy was trained 1) only on successful demos 2) corresponding to outcome = success_outcome)
+                success_outcome = 4.0
+                print(f"Adding VLA training data factors to surrogate, assuming only successful demos with outcome = {success_outcome}")
+                vla_Y = torch.full((self.vla_points.shape[0], 1), success_outcome, **tkwargs)
+                # Append to training data
+                self.train_X = torch.cat([self.train_X, self.vla_points], dim=0)
+                self.train_Y = torch.cat([self.train_Y, vla_Y], dim=0)                
         self.ood_metric = ood_metric # some measure of likelihood of drawing evaluation factor combo f from the training data distribution
     
     def add_feature(self, points):

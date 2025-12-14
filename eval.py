@@ -120,7 +120,8 @@ def main(args):
             train_Y = torch.stack(initial_Y_tensors)
             sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None, 
                                    model_name=args.model_name, acq_func_name=args.acq_func_name,
-                                   vla_data_path=args.vla_data_path, ood_metric=args.ood_metric)
+                                   vla_data_path=args.vla_data_path, ood_metric=args.ood_metric,
+                                   use_train_data_for_surrogate=args.use_train_data_for_surrogate)
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
             sampler = IIDSampler(points)
@@ -156,7 +157,8 @@ def main(args):
             train_Y = torch.stack(initial_Y_tensors)
             sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None, 
                                    model_name=args.model_name, acq_func_name=args.acq_func_name,
-                                   vla_data_path=args.vla_data_path, ood_metric=args.ood_metric)
+                                   vla_data_path=args.vla_data_path, ood_metric=args.ood_metric,
+                                   use_train_data_for_surrogate=args.use_train_data_for_surrogate)
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
 
