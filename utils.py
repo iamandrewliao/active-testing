@@ -71,11 +71,11 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
         train_Y_norm = (train_Y - y_mean) / y_std
         if model_name == "MDN":
             input_dim = train_X.shape[-1]
-            raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=3).to(device=train_X.device, dtype=train_X.dtype)
-            train_mdn(raw_model, train_X, train_Y_norm, bounds)
+            raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=3, n_hidden_layers=5, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype)
+            train_mdn(raw_model, train_X, train_Y_norm, bounds, epochs=500)
             model = MDNWrapper(raw_model, bounds, outcome_stats=outcome_stats)
         elif model_name == "DeepEnsemble":
-            models = [MLP(input_dim=train_X.shape[-1], hidden_dim=32, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
+            models = [MLP(input_dim=train_X.shape[-1], hidden_dim=32, n_hidden_layers=5, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
             train_ensemble(models, train_X, train_Y_norm, bounds, epochs=200)
             model = DeepEnsembleWrapper(models, bounds, outcome_stats=outcome_stats)        
     return model
@@ -142,18 +142,27 @@ def calculate_log_likelihood(model, X_test, Y_test):
     posterior = model.posterior(X_test)
     pred_dist = posterior.distribution
     
-    # log_prob will be [S, N] for Bayesian, or [N] for SingleTaskGP
-    log_probs = pred_dist.log_prob(Y_test)
-    
-    if log_probs.ndim == 2: # Bayesian case [S, N]
-        # We want log( E[p(y|x)] ) = log( 1/S * sum( exp(log_p(y|x, theta_s)) ) )
-        # This is equivalent to logsumexp(log_p) - log(S)
+    # Check if the distribution is a GPyTorch MultivariateNormal
+    # GPs need this special handling to avoid O(N^3) inversion crashes on large test sets
+    is_gp = hasattr(pred_dist, "lazy_covariance_matrix") or hasattr(pred_dist, "covariance_matrix")
+    if is_gp:
+        # Construct independent normals using marginal mean and variance
+        mean = posterior.mean
+        var = posterior.variance
+        marginal_dist = torch.distributions.Normal(mean, var.sqrt())
+        log_probs = marginal_dist.log_prob(Y_test)
+    else:
+        # MDN and DeepEnsemble use MixtureSameFamily, which supports batch log_prob 
+        # Correctly handles multi-modal distributions
+        log_probs = pred_dist.log_prob(Y_test)
+
+    if log_probs.ndim == 2: # Shape [S, N] (for FullyBayesian models)
         num_samples = log_probs.shape[0]
-        # Average over the N test points
+        # Average in log space: log(1/S * sum(exp(log_p)))
         mean_log_pred_density = torch.logsumexp(log_probs, dim=0).mean() - torch.log(torch.tensor(num_samples))
         return mean_log_pred_density.item()
-    else: # SingleTaskGP, DeepEnsemble case [N]
-        return log_probs.mean().item() # Just average over test points
+    else: # Shape [N]
+        return log_probs.mean().item()
 
 
 @torch.no_grad()

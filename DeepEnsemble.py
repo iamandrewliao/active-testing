@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.distributions import Normal, Categorical, MixtureSameFamily
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dim, dropout_prob, n_hidden_layers=2):
+    def __init__(self, input_dim, hidden_dim, n_hidden_layers=3, dropout_prob=0.1):
         super().__init__()
         
         # 1. Start with the input layer

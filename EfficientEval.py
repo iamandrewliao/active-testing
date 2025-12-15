@@ -15,7 +15,7 @@ OUTCOME_RANGE = (0, 4)
 
 # Mixture of Gaussians MLP (Mixture Density Network)
 class MDN(nn.Module):
-    def __init__(self, input_dim, hidden_dim, n_components, n_hidden_layers=2, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, n_components, n_hidden_layers=3, dropout_prob=0.1):
         super().__init__()
         self.input_dim = input_dim
         self.n_components = n_components
@@ -157,7 +157,7 @@ def mdn_loss(pi, mu, sigma, target):
     
     return -torch.mean(log_mix_prob)
 
-def train_mdn(model, train_X, train_Y, bounds=None, num_epochs=100, lr=0.01):
+def train_mdn(model, train_X, train_Y, bounds=None, epochs=100, lr=0.01):
     """
     Trains the MDN model. 
     This handles normalization internally so the raw model learns on scaled data [0, 1].
@@ -171,7 +171,7 @@ def train_mdn(model, train_X, train_Y, bounds=None, num_epochs=100, lr=0.01):
         train_X = (train_X - bounds[0]) / (bounds[1] - bounds[0])
 
     model.train()
-    for epoch in range(num_epochs):
+    for epoch in range(epochs):
         optimizer.zero_grad()
         # Forward pass on raw model with normalized data
         pi, mu, sigma = model(train_X)

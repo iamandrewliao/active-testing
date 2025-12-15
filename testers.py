@@ -51,7 +51,6 @@ class ActiveTester:
         Adds the OOD feature (distance or density) to a set of points (factor values).
         """
         if self.vla_points is None:
-            print("No VLA metadata provided, returning unaugmented points.")
             return points
         if self.ood_metric == "knn":
             # Calculate distance to nearest VLA neighbor
@@ -60,8 +59,7 @@ class ActiveTester:
             # Calculate probability density
             feature = compute_kde_density(points, self.vla_points)
         else:
-            # Fallback or unknown metric, return unaugmented
-            print("No OOD metric specified, returning unaugmented points.")
+            # Fallback or unknown metric, return unaugmented points
             return points
         # Concatenate [points, feature]
         return torch.cat([points, feature], dim=-1)
@@ -71,7 +69,7 @@ class ActiveTester:
         Fits the surrogate model and optimizes the acquisition function to find the
         next best point to sample.
         """
-        print(f"Fitting surrogate model {self.model_name}")
+        # print(f"Fitting surrogate model {self.model_name}")
         start_time = time.time()
 
         # Augment the evaluation points (train_X) with the OOD feature
@@ -97,7 +95,7 @@ class ActiveTester:
 
         self.model = fit_surrogate_model(train_X_final, self.train_Y, bounds_final, model_name=self.model_name)
 
-        print(f"Optimizing acquisition function {self.acq_func_name}")
+        # print(f"Optimizing acquisition function {self.acq_func_name}")
         # We must likewise augment the available design space (same as full design space but without the already-sampled points)
         design_space_input = self.available_design_space
         mc_points_input = self.mc_points
@@ -114,7 +112,7 @@ class ActiveTester:
         acquired_point = acquired_point_aug[:num_factors]
         
         end_time = time.time()
-        print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
+        # print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
 
         # Remove the acquired point from the design space
         self.available_design_space = self.available_design_space[~torch.all(self.available_design_space == acquired_point, dim=1)]
