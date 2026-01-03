@@ -29,7 +29,7 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
     Fits and returns surrogate model.
     """
     # print(f"Fitting {model_name} model with {train_X.shape[0]} points...")
-    input_transform = Normalize(d=train_X.shape[-1], bounds=bounds) # normalizes X to [0, 1]^d
+    input_transform = Normalize(d=train_X.shape[-1], bounds=bounds) # normalizes X to unit cube [0, 1]^d
     outcome_transform = Standardize(m=1) # standardizes Y to have zero mean and unit variance
     if model_name=="SingleTaskGP" or model_name == "I-BNN": # infinite-width BNN is just a GP with a special kernel
         if model_name == "SingleTaskGP":

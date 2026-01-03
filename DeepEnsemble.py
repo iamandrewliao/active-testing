@@ -34,9 +34,8 @@ class MLP(nn.Module):
     def forward(self, x):
         h = self.layers(x)
         mean = self.mean_head(h)
-        var = F.softplus(self.var_head(h)) + 1e-6
+        var = F.exp(self.var_head(h))
         return mean, var
-
 
 def train_ensemble(models, train_X, train_Y, bounds=None, epochs=100, lr=0.01):
     """
@@ -47,10 +46,13 @@ def train_ensemble(models, train_X, train_Y, bounds=None, epochs=100, lr=0.01):
     # Gaussian NLL Loss: L = 0.5 * (log(var) + (y - mean)^2 / var)
     loss_fn = nn.GaussianNLLLoss()
 
+    # Standardize targets
+    train_Y_standardized = (train_Y - train_Y.mean()) / (train_Y.std() + 1e-6)
+
     # Normalize inputs for training if bounds provided
     if bounds is not None:
         # Ensure bounds match X's device and dtype
-        bounds = bounds.to(train_X.device, dtype=train_X.dtype)
+        bounds = bounds.to(train_X)
         train_X = (train_X - bounds[0]) / (bounds[1] - bounds[0])
     
     for i, (model, optimizer) in enumerate(zip(models, optimizers)):
@@ -58,8 +60,7 @@ def train_ensemble(models, train_X, train_Y, bounds=None, epochs=100, lr=0.01):
         for epoch in range(epochs):
             optimizer.zero_grad()
             mean, var = model(train_X)
-            # GaussianNLLLoss expects variance, not std dev
-            loss = loss_fn(mean, train_Y, var)
+            loss = loss_fn(mean, train_Y_standardized, var)
             loss.backward()
             optimizer.step()
 
@@ -75,7 +76,7 @@ class EnsemblePosterior(Posterior):
             means: [M, batch_shape, 1]
             variances: [M, batch_shape, 1]
         """
-        # 1. Moment Matching for BoTorch Acquisition Functions (The part you were missing)
+        # 1. Moment matching
         # E[y] = 1/M * sum(mu)
         self._mean = means.mean(dim=0) 
         
@@ -84,7 +85,7 @@ class EnsemblePosterior(Posterior):
         var_of_means = means.var(dim=0, unbiased=False)
         self._variance = avg_var + var_of_means
 
-        # 2. Create Mixture Distribution for Log Likelihood Evaluation
+        # 2. Create mixture distribution for log-likelihood evaluation
         # Transpose to [batch_shape, M] for distribution components
         # Remove the last output dimension (which is 1)
         means_squeezed = means.squeeze(-1)       # [M, batch_shape...]
@@ -120,15 +121,18 @@ class EnsemblePosterior(Posterior):
         return self._mean.dtype
     
     def rsample(self, sample_shape=torch.Size(), base_samples=None):
-        # Simple Gaussian sampling approximation for qNIPV compatibility
+        # Gaussian sampling approximation; draw samples from N(mean, variance)
+        # Reparameterization trick: y = mu + sigma * eps, eps ~ N(0, I)
         # Shape: sample_shape x batch_shape x q x m
         shape = sample_shape + self._mean.shape
         eps = torch.randn(shape, device=self.device, dtype=self.dtype)
         return self._mean + torch.sqrt(self._variance) * eps
 
+# https://botorch.org/docs/tutorials/custom_model/
 class DeepEnsembleWrapper(Model):
     def __init__(self, models, bounds, outcome_stats=None):
         super().__init__()
+        models = [m.eval() for m in models]
         self.models = torch.nn.ModuleList(models)
         self.register_buffer("bounds", bounds)
         # Store mean/std buffers for un-standardizing later
@@ -139,14 +143,14 @@ class DeepEnsembleWrapper(Model):
             # Default to no scaling if not provided
             self.register_buffer("y_mean", torch.tensor(0.0))
             self.register_buffer("y_std", torch.tensor(1.0))
-        self._num_outputs = 1
+        # self._num_outputs = 1
 
     def forward(self, x):
-        # Normalize inputs
+        # Normalize inputs (like input_transform in BoTorch)
         x_norm = (x - self.bounds[0]) / (self.bounds[1] - self.bounds[0])
-        return self._predict_individual(x_norm)
+        return self._predict_ensemble(x_norm)
 
-    def _predict_individual(self, x):
+    def _predict_ensemble(self, x):
         """Returns predictions from all models: [M, batch, 1]"""
         means_list = []
         vars_list = []
@@ -159,18 +163,14 @@ class DeepEnsembleWrapper(Model):
                 vars_list.append(v)
         return torch.stack(means_list), torch.stack(vars_list)
 
-    def posterior(self, X, observation_noise=False, **kwargs):
-        # 1. Forward pass
+    def posterior(self, X, **kwargs):
+        # 1. Forward pass (includes input normalization)
         # X shape: (batch_shape, q, d)
         means, vars = self.forward(X)
-        # 2. Un-standardize them back to original scale
+        # 2. Un-standardize outputs back to original scale
         # Mean: mu_real = mu_norm * std + mean
         means = means * self.y_std + self.y_mean
         # Variance: var_real = var_norm * (std^2)
         vars = vars * (self.y_std ** 2)
         # 3. Return EnsemblePosterior
         return EnsemblePosterior(means, vars)
-    
-    @property
-    def num_outputs(self):
-        return self._num_outputs
