@@ -20,8 +20,8 @@ from botorch.optim import optimize_acqf, optimize_acqf_discrete
 from scipy.stats import wasserstein_distance
 from scipy.stats import gaussian_kde
 
-from EfficientEval import MDN, train_mdn, MDNWrapper, MDN_BALD
-from DeepEnsemble import train_ensemble, MLP, DeepEnsembleWrapper
+from MDN import MDN, MDNWrapper, train_mdn
+from DeepEnsemble import MLP, DeepEnsembleWrapper, train_ensemble
 
 
 def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):

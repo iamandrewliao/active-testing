@@ -6,8 +6,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Normal, Categorical, MixtureSameFamily
-from botorch.posteriors.torch import TorchPosterior
-from botorch.models.model import Model
 
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, n_hidden_layers=3, dropout_prob=0.1):
@@ -67,6 +65,68 @@ def train_ensemble(models, train_X, train_Y, bounds=None, epochs=100, lr=0.01):
             optimizer.step()
 
 # Additional code to integrate with BoTorch
+from botorch.models.model import Model
+from botorch.posteriors import Posterior
+
+class EnsemblePosterior(Posterior):
+    """Custom Posterior for Deep Ensemble."""
+    def __init__(self, means, variances):
+        """
+        Args:
+            means: [M, batch_shape, 1]
+            variances: [M, batch_shape, 1]
+        """
+        # 1. Moment matching
+        # E[y] = 1/M * sum(mu)
+        self._mean = means.mean(dim=0) 
+        
+        # Var(y) = 1/M sum(sigma^2 + mu^2) - E[y]^2
+        avg_var = variances.mean(dim=0)
+        var_of_means = means.var(dim=0, unbiased=False)
+        self._variance = avg_var + var_of_means
+
+        # 2. Create mixture distribution for log-likelihood evaluation
+        # Transpose to [batch_shape, M] for distribution components
+        # Remove the last output dimension (which is 1)
+        means_squeezed = means.squeeze(-1)       # [M, batch_shape...]
+        vars_squeezed = variances.squeeze(-1)    # [M, batch_shape...]
+        
+        # Move the ensemble dimension (0) to the end (-1)
+        batch_means = means_squeezed.movedim(0, -1)      # [batch_shape..., M]
+        batch_sigmas = vars_squeezed.sqrt().movedim(0, -1) # [batch_shape..., M]
+        
+        # Create probabilities matching the batch shape
+        # shape: [batch_shape..., M]
+        batch_shape = batch_means.shape[:-1]
+        M = batch_means.shape[-1]
+        probs = torch.ones(*batch_shape, M, device=means.device) / M
+        
+        mix = Categorical(probs=probs)
+        comp = Normal(batch_means, batch_sigmas)
+        
+        # This allows .log_prob() to work correctly on the mixture
+        self.distribution = MixtureSameFamily(mix, comp)
+
+    @property
+    def mean(self):
+        return self._mean
+    @property
+    def variance(self):
+        return self._variance
+    @property
+    def device(self):
+        return self._mean.device
+    @property
+    def dtype(self):
+        return self._mean.dtype
+    
+    def rsample(self, sample_shape=torch.Size(), base_samples=None):
+        # Gaussian sampling approximation; draw samples from N(mean, variance)
+        # Reparameterization trick: y = mu + sigma * eps, eps ~ N(0, I)
+        # Shape: sample_shape x batch_shape x q x m
+        shape = sample_shape + self._mean.shape
+        eps = torch.randn(shape, device=self.device, dtype=self.dtype)
+        return self._mean + torch.sqrt(self._variance) * eps
 
 # https://botorch.org/docs/tutorials/custom_model/
 class DeepEnsembleWrapper(Model):
@@ -83,6 +143,7 @@ class DeepEnsembleWrapper(Model):
             # Default to no scaling if not provided
             self.register_buffer("y_mean", torch.tensor(0.0))
             self.register_buffer("y_std", torch.tensor(1.0))
+        # self._num_outputs = 1
 
     def forward(self, x):
         # Normalize inputs (like input_transform in BoTorch)
@@ -90,7 +151,7 @@ class DeepEnsembleWrapper(Model):
         return self._predict_ensemble(x_norm)
 
     def _predict_ensemble(self, x):
-        """Returns predictions from all M models: [M, batch, 1]"""
+        """Returns predictions from all models: [M, batch, 1]"""
         means_list = []
         vars_list = []
         # No grad needed for posterior/prediction usually
@@ -106,37 +167,10 @@ class DeepEnsembleWrapper(Model):
         # 1. Forward pass (includes input normalization)
         # X shape: (batch_shape, q, d)
         means, vars = self.forward(X)
-
         # 2. Un-standardize outputs back to original scale
         # Mean: mu_real = mu_norm * std + mean
         means = means * self.y_std + self.y_mean
         # Variance: var_real = var_norm * (std^2)
         vars = vars * (self.y_std ** 2)
-
-        # 3. Create the Mixture of Gaussians distribution
-        # Current shape: [M, batch_shape, q, 1]
-        # We need to move M to the dim expected by MixtureSameFamily (the rightmost batch dim)
-        # Target shape for params: [batch_shape, q, M, 1]
-        # Move dim 0 (M) to dim -2 (before the event dim '1')
-        means = means.movedim(0, -2) 
-        vars = vars.movedim(0, -2)
-        stds = vars.sqrt()
-
-        # Mixture distribution
-        # The mixture is over the M dimension (dim -2)
-        # We create a Categorical distribution with uniform weights over M
-        batch_shape = means.shape[:-2]  # (batch_shape, q)
-        M = means.shape[-2]
-        logits = torch.zeros(*batch_shape, M, device=X.device, dtype=X.dtype)
-        mix = Categorical(logits=logits)
-
-        # Component distribution
-        comp = Normal(loc=means, scale=stds)
-
-        # MixtureSameFamily expects the component distribution to have batch_shape matching the mixture distribution. 
-        # Mixture Dist Batch Shape: (..., M)
-        # Component Dist Batch Shape: (..., M)
-        # Note: MixtureSameFamily reduces the M dimension.
-        distribution = MixtureSameFamily(mix, comp)
-
-        return TorchPosterior(distribution)
+        # 3. Return EnsemblePosterior
+        return EnsemblePosterior(means, vars)

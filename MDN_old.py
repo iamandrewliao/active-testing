@@ -1,6 +1,6 @@
 '''
-MLP that takes in factor values and returns Mixture of Gaussians distribution parameters
-(exactly like https://arxiv.org/pdf/2502.09829)
+Mixture Density Network (MDN): MLP that takes in factor values and returns Mixture of Gaussians distribution parameters
+https://arxiv.org/pdf/2502.09829
 '''
 import torch
 import torch.nn as nn
@@ -269,8 +269,8 @@ def train_mdn(model, train_X, train_Y, bounds=None, epochs=100, lr=0.01):
 #         mu_s = torch.stack(mu_samples)
 #         sigma_s = torch.stack(sigma_samples)
         
-#         # 2. Discretize and compute probabilities on the grid
-#         # We need to evaluate the PDF P(y|x) at every grid point y for every sample s
+#         # 2. Discretize and compute probabilities
+#         # We need to evaluate the PDF P(y|x) at every point y for every sample s
 #         # y_eval: [1, 1, 1, num_bins] to broadcast against [S, batch, K, 1]
 #         y_eval = self.y_discrete.view(1, 1, 1, -1)
         
