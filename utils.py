@@ -22,7 +22,7 @@ from scipy.stats import gaussian_kde
 
 from MDN import MDN, MDNWrapper, train_mdn
 from DeepEnsemble import MLP, DeepEnsembleWrapper, train_ensemble
-
+from BALD_XWED import BALD, XWED
 
 def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
     """
@@ -93,8 +93,10 @@ def get_acquisition_function(model, acq_func_name, mc_points=None):
         )
     elif acq_func_name == "qBALD":
         acq_func = qBayesianActiveLearningByDisagreement(model=model)
-    elif acq_func_name == "MDN_BALD":
-        acq_func = MDN_BALD(model=model)
+    elif acq_func_name == "BALD":
+        acq_func = BALD(model=model)
+    elif acq_func_name == "XWED":
+        acq_func = XWED(model=model)  # TO DO: set y_max
     else:
         raise ValueError(f"Unknown acq_func_name: {acq_func_name}")
     

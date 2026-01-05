@@ -127,8 +127,8 @@ class DeepEnsembleWrapper(Model):
         # We create a Categorical distribution with uniform weights over M
         batch_shape = means.shape[:-2]  # (batch_shape, q)
         M = means.shape[-2]
-        logits = torch.zeros(*batch_shape, M, device=X.device, dtype=X.dtype)
-        mix = Categorical(logits=logits)
+        probs = torch.ones(*batch_shape, M, device=X.device, dtype=X.dtype)
+        mix = Categorical(probs=probs)
 
         # Component distribution
         comp = Normal(loc=means, scale=stds)
