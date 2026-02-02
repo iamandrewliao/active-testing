@@ -22,19 +22,26 @@ from scipy.stats import gaussian_kde
 
 from MDN import MDN, MDNWrapper, train_mdn
 from DeepEnsemble import MLP, DeepEnsembleWrapper, train_ensemble
-from BALD_XWED import BALD, XWED
+from BALD import BALD
 
-def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
+def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use_mc_dropout=None):
     """
     Fits and returns surrogate model.
+    
+    Args:
+        train_X: Training inputs
+        train_Y: Training outputs
+        bounds: Input bounds for normalization
+        model_name: Name of the model to use
+        use_mc_dropout: For MDN, whether to use MC dropout (None = True for MDN, False otherwise)
     """
     # print(f"Fitting {model_name} model with {train_X.shape[0]} points...")
     input_transform = Normalize(d=train_X.shape[-1], bounds=bounds) # normalizes X to unit cube [0, 1]^d
     outcome_transform = Standardize(m=1) # standardizes Y to have zero mean and unit variance
-    if model_name=="SingleTaskGP" or model_name == "I-BNN": # infinite-width BNN is just a GP with a special kernel
+    if model_name=="SingleTaskGP" or model_name == "I-BNN" or model_name == "IBNN": # infinite-width BNN is just a GP with a special kernel
         if model_name == "SingleTaskGP":
             kernel = None
-        elif model_name == "I-BNN":
+        elif model_name == "I-BNN" or model_name == "IBNN":
             kernel = InfiniteWidthBNNKernel(depth=3)
         model = SingleTaskGP(
             train_X=train_X,
@@ -73,7 +80,11 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP"):
             input_dim = train_X.shape[-1]
             raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=3, n_hidden_layers=5, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype)
             train_mdn(raw_model, train_X, train_Y_norm, bounds, epochs=500)
-            model = MDNWrapper(raw_model, bounds, outcome_stats=outcome_stats)
+            # MC dropout: default to True (paper method), but can be overridden
+            if use_mc_dropout is None:
+                use_mc_dropout = True  # Default: use MC dropout as in paper
+            model = MDNWrapper(raw_model, bounds, outcome_stats=outcome_stats, 
+                             use_mc_dropout=use_mc_dropout, num_mc_samples=10)
         elif model_name == "DeepEnsemble":
             models = [MLP(input_dim=train_X.shape[-1], hidden_dim=32, n_hidden_layers=5, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
             train_ensemble(models, train_X, train_Y_norm, bounds, epochs=200)
@@ -95,8 +106,6 @@ def get_acquisition_function(model, acq_func_name, mc_points=None):
         acq_func = qBayesianActiveLearningByDisagreement(model=model)
     elif acq_func_name == "BALD":
         acq_func = BALD(model=model)
-    elif acq_func_name == "XWED":
-        acq_func = XWED(model=model)  # TO DO: set y_max
     else:
         raise ValueError(f"Unknown acq_func_name: {acq_func_name}")
     
@@ -129,10 +138,19 @@ def calculate_rmse(model, X_test, Y_test):
     """Calculates the Root Mean Squared Error on the test set."""  
     model.eval()
     posterior = model.posterior(X_test)
-    mean = posterior.mean.squeeze(-1) # Shape is [N] or [S, N]
+    mean = posterior.mean
+    
+    # Handle shape: could be (N,), (N, 1), (N, q, 1), (S, N, q, 1) etc.
+    # Squeeze all trailing singleton dimensions to get (N,) or (S, N)
+    while mean.ndim > 1 and mean.shape[-1] == 1:
+        mean = mean.squeeze(-1)
     
     if mean.ndim == 2: # If it's Bayesian (S, N)
         mean = mean.mean(dim=0) # Average over samples to get [N]
+    
+    # Ensure Y_test is 1D for comparison
+    if Y_test.ndim > 1:
+        Y_test = Y_test.squeeze()
     
     return torch.sqrt(torch.mean((mean - Y_test)**2)).item()
 
@@ -144,6 +162,11 @@ def calculate_log_likelihood(model, X_test, Y_test):
     posterior = model.posterior(X_test)
     pred_dist = posterior.distribution
     
+    # Ensure Y_test has correct shape for log_prob
+    # For distributions with batch_shape (N,), Y_test should be (N,)
+    # For distributions with batch_shape (N, q), Y_test should be (N, q) or broadcastable
+    Y_test_flat = Y_test.squeeze() if Y_test.ndim > 1 else Y_test
+    
     # Check if the distribution is a GPyTorch MultivariateNormal
     # GPs need this special handling to avoid O(N^3) inversion crashes on large test sets
     is_gp = hasattr(pred_dist, "lazy_covariance_matrix") or hasattr(pred_dist, "covariance_matrix")
@@ -151,17 +174,34 @@ def calculate_log_likelihood(model, X_test, Y_test):
         # Construct independent normals using marginal mean and variance
         mean = posterior.mean
         var = posterior.variance
-        marginal_dist = torch.distributions.Normal(mean, var.sqrt())
-        log_probs = marginal_dist.log_prob(Y_test)
+        # Squeeze dimensions to match Y_test
+        while mean.ndim > 1 and mean.shape[-1] == 1:
+            mean = mean.squeeze(-1)
+        while var.ndim > 1 and var.shape[-1] == 1:
+            var = var.squeeze(-1)
+        
+        # Handle Bayesian case
+        if mean.ndim == 2:  # (S, N)
+            # For each sample, compute log_prob and average
+            log_probs_list = []
+            for s in range(mean.shape[0]):
+                marginal_dist = torch.distributions.Normal(mean[s], var[s].sqrt())
+                log_probs_list.append(marginal_dist.log_prob(Y_test_flat))
+            log_probs = torch.stack(log_probs_list, dim=0)  # (S, N)
+        else:
+            marginal_dist = torch.distributions.Normal(mean, var.sqrt())
+            log_probs = marginal_dist.log_prob(Y_test_flat)
     else:
         # MDN and DeepEnsemble use MixtureSameFamily, which supports batch log_prob 
         # Correctly handles multi-modal distributions
-        log_probs = pred_dist.log_prob(Y_test)
+        # MixtureSameFamily.log_prob expects input with shape matching batch_shape
+        # Distribution has batch_shape (N,), so Y_test should be (N,)
+        log_probs = pred_dist.log_prob(Y_test_flat)
 
     if log_probs.ndim == 2: # Shape [S, N] (for FullyBayesian models)
         num_samples = log_probs.shape[0]
         # Average in log space: log(1/S * sum(exp(log_p)))
-        mean_log_pred_density = torch.logsumexp(log_probs, dim=0).mean() - torch.log(torch.tensor(num_samples))
+        mean_log_pred_density = torch.logsumexp(log_probs, dim=0).mean() - torch.log(torch.tensor(num_samples, device=log_probs.device, dtype=log_probs.dtype))
         return mean_log_pred_density.item()
     else: # Shape [N]
         return log_probs.mean().item()

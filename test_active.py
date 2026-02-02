@@ -173,6 +173,12 @@ if __name__ == "__main__":
         default='knn',
         help="Metric to use for the OOD feature (distance to nearest neighbor or density)."
     )
+    parser.add_argument(
+        '--use_mc_dropout',
+        type=lambda x: (str(x).lower() == 'true'),
+        default=None,
+        help="For MDN: whether to use MC dropout (True/False). Default: True for MDN, N/A for others."
+    )
     args = parser.parse_args()
 
     print("--- Starting Active Learning Test on Simulated Data ---")
@@ -193,7 +199,7 @@ if __name__ == "__main__":
     iid_results = []
     
     # Fit initial model (same for both IID and active)
-    init_model = fit_surrogate_model(X_init, Y_init, BOUNDS, model_name=args.model_name)
+    init_model = fit_surrogate_model(X_init, Y_init, BOUNDS, model_name=args.model_name, use_mc_dropout=args.use_mc_dropout)
     
     rmse, ll, wd = calculate_metrics(init_model, X_test, Y_test)
     active_results.append({

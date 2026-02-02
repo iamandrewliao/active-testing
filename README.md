@@ -11,7 +11,7 @@ I have included the following acquisition functions and surrogate models:
 |---------------|-------------------------------------------------------------------------------------|
 | qBALD         | Fully Bayesian models e.g. FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP |
 | qNIPV, PSD    | Any                                                                                 |
-| MDN_BALD | MDN |
+| BALD | MDN, Deep Ensemble |
 ## Key files
 - [./testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
 - [./utils.py](./utils.py): Helper functions
