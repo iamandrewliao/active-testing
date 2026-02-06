@@ -16,8 +16,8 @@ I have included the following acquisition functions and surrogate models:
 - [./testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
 - [./utils.py](./utils.py): Helper functions
     - Note: is_valid_point() is highly setup-dependent and will most likely need to be adjusted. 
-- [./eval.py](./eval.py): Main evaluation script, run alongside robot policy deployment (TO DO: don't train model in every other script (viz.py, etc.), just use trained model from evaluation)
-
+- [./factors_config.py](./factors_config.py): Factor configurations for your specific evaluation. Defines factors, tasks, task outcome ranges, etc. Make sure this is set up correctly before moving on to evaluation.
+- [./eval.py](./eval.py): Main evaluation script, run alongside robot policy deployment
 Example run commands:
 ```
 uv run eval.py --mode brute_force --num_evals 100 --output_file results/bf_results.csv --save_points points/bf_points.csv --grid_resolution 11

@@ -4,7 +4,7 @@ Based on active testing results, determine what data to collect next.
 
 import torch
 from viz import _load_data, _get_tensors_from_df, _fit_gp_model
-from utils import get_design_points, is_valid_point
+from utils import get_design_points_test, is_valid_point
 
 
 # --- Define Constants ---
@@ -38,7 +38,7 @@ def find_certain_failures(results_file, grid_resolution, mean_pct, variance_pct)
 
     # 3. Generate the target grid
     print(f"Generating {grid_resolution}x{grid_resolution} analysis grid...")
-    grid_points = get_design_points(grid_resolution, BOUNDS, tkwargs)
+    grid_points = get_design_points_test(grid_resolution, BOUNDS, tkwargs)
 
     print("Checking grid point validity...")
     # We check all points on the grid for validity

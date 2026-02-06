@@ -11,12 +11,24 @@ import os
 # Import necessary BoTorch/GPyTorch components
 from botorch.utils.sampling import draw_sobol_samples
 
-from utils import get_design_points, is_valid_point, fit_surrogate_model, get_acquisition_function, optimize_acq_func
+from utils import get_design_points_test, fit_surrogate_model, get_acquisition_function, optimize_acq_func, calculate_rmse, calculate_log_likelihood
+from factors_config import (
+    BOUNDS,
+    FACTOR_COLUMNS,
+    get_outcome_range,
+    get_success_outcome,
+    OBJECT_POS_X_VALUES,
+    OBJECT_POS_Y_VALUES,
+    TABLE_HEIGHT_VALUES,
+    VIEWPOINT_VALUES,
+    get_viewpoint_name,
+    get_viewpoint_params,
+    is_valid_point,
+    VIEWPOINT_REPRESENTATION,
+)
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
-# Define the search space bounds (hardcoded to match eval.py)
-BOUNDS = torch.tensor([[0.0, 0.0], [1.0, 1.0]], **tkwargs)
 
 def _load_data(filepath):
     """Loads evaluation data from a CSV file."""
@@ -32,31 +44,36 @@ def _load_data(filepath):
 
 def _get_tensors_from_df(df):
     """Extracts and formats training tensors from a DataFrame."""
-    train_X = torch.tensor(df[['x', 'y']].values, **tkwargs)
+    # Use FACTOR_COLUMNS from config to handle 4D factors
+    train_X = torch.tensor(df[FACTOR_COLUMNS].values, **tkwargs)
     train_Y = torch.tensor(df['continuous_outcome'].values, **tkwargs).unsqueeze(-1) # Shape [N, 1]
     return train_X, train_Y
 
 
-def plot_tested_points(df, output_file):
+def plot_tested_points(df, output_file, task_name=None):
     """
     Plots a simple scatter plot of tested points, colored by their outcome.
+    For 4D factors, shows 2D projection (x vs y).
     """
     print(f"Generating tested points plot -> {output_file}...")
     plt.figure(figsize=(10, 8))
 
-    # Scatter plot colored by continuous outcome
+    # Get outcome range from task config (with fallback)
+    min_outcome, max_outcome, _ = get_outcome_range(task_name)
+
+    # Scatter plot colored by continuous outcome (2D projection: x vs y)
     sc = plt.scatter(
         df['x'],
         df['y'],
         c=df['continuous_outcome'],
         cmap='viridis_r',  # Use _r for "reversed" (low=bad, high=good)
-        vmin=0,
-        vmax=4,
+        vmin=min_outcome,
+        vmax=max_outcome,
         edgecolors='k',
         alpha=0.8
     )
 
-    plt.colorbar(sc, label='Continuous Outcome (0-4)')
+    plt.colorbar(sc, label=f'Continuous Outcome ({min_outcome}-{max_outcome})')
     plt.title(f"Tested Points and Outcomes (N={len(df)})")
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
@@ -68,25 +85,64 @@ def plot_tested_points(df, output_file):
     print(f"Saved figure to {output_file}.")
 
 
-def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_name):
+def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_name, results_file=None, task_name=None):
     """
     Plots the surrogate model mean and acquisition function landscape
     for an active testing run.
+    
+    Args:
+        df: DataFrame with evaluation results
+        output_file: Output path for the plot
+        grid_resolution: Resolution for the grid (for 2D projection)
+        model_name: Model name (for fallback if model not saved)
+        acq_func_name: Acquisition function name
+        results_file: Path to results CSV (used to find saved model)
+        task_name: Task name for outcome range
     """
     print(f"Generating active learning plots -> {output_file}...")
+    import pickle
 
-    # 1. Fit the model
-    train_X, train_Y = _get_tensors_from_df(df)
-    if train_X.shape[0] < 1:
-        print("Error: No data points found in the results file. Cannot generate plots.")
-        return
-    # Set seed for deterministic 'get_optimal_samples'
-    # Use the number of data points as the seed
-    if train_X.shape[0] >= 2:
-        torch.manual_seed(train_X.shape[0]+1)
-        print(f"Using seed {train_X.shape[0]}")
-    print(f"  Fitting {model_name} model...")
-    model = fit_surrogate_model(train_X, train_Y, BOUNDS, model_name=model_name)
+    # Try to load saved model from eval.py
+    model = None
+    if results_file:
+        # Check if results file is in new structure: results/{eval_id}/results.csv
+        # If so, look for models in results/{eval_id}/models/
+        results_dir = os.path.dirname(results_file)
+        results_basename = os.path.basename(results_file)
+        
+        # Try new structure first: results/{eval_id}/models/final_model.pkl
+        if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
+            model_path = os.path.join(results_dir, 'models', 'final_model.pkl')
+        else:
+            # Fall back to old structure: same directory as CSV
+            model_path = results_file.replace('.csv', '_model.pkl')
+        
+        if os.path.exists(model_path):
+            try:
+                print(f"  Loading saved model from '{model_path}'...")
+                with open(model_path, 'rb') as f:
+                    model_data = pickle.load(f)
+                    model = model_data['model']
+                    # Verify model name matches
+                    if model_data.get('model_name') != model_name:
+                        print(f"  Warning: Saved model name ({model_data.get('model_name')}) doesn't match requested ({model_name}). Using saved model.")
+                    print(f"  Successfully loaded model (trained on {model_data['train_X'].shape[0]} points).")
+            except Exception as e:
+                print(f"  Warning: Could not load saved model: {e}. Will retrain.")
+    
+    # If model not loaded, retrain (fallback)
+    if model is None:
+        train_X, train_Y = _get_tensors_from_df(df)
+        if train_X.shape[0] < 1:
+            print("Error: No data points found in the results file. Cannot generate plots.")
+            return
+        # Set seed for deterministic 'get_optimal_samples'
+        # Use the number of data points as the seed
+        if train_X.shape[0] >= 2:
+            torch.manual_seed(train_X.shape[0]+1)
+            print(f"Using seed {train_X.shape[0]}")
+        print(f"  Fitting {model_name} model...")
+        model = fit_surrogate_model(train_X, train_Y, BOUNDS, model_name=model_name)
 
     # 2. Get the acquisition function
     print(f"  Instantiating {acq_func_name} acquisition function.")
@@ -97,8 +153,43 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
         ).squeeze(1).to(**tkwargs)
     acq_func = get_acquisition_function(model=model, acq_func_name=acq_func_name, mc_points=mc_points)
 
-    # 3. Create grid and evaluate
-    grid_tensor = get_design_points(grid_resolution, BOUNDS, tkwargs)
+    # 3. Create 2D grid for visualization (x, y) and expand to the full factor space
+    # For visualization, we fix table_height and viewpoint to default values
+    x_grid = torch.linspace(BOUNDS[0, 0].item(), BOUNDS[1, 0].item(), grid_resolution, **tkwargs)
+    y_grid = torch.linspace(BOUNDS[0, 1].item(), BOUNDS[1, 1].item(), grid_resolution, **tkwargs)
+    xx, yy = torch.meshgrid(x_grid, y_grid, indexing='ij')
+    grid_2d = torch.stack([xx.flatten(), yy.flatten()], dim=1)
+    
+    # Expand to full factor space: use default values for table_height and viewpoint
+    default_table_height = 2.0  # Middle value
+    if VIEWPOINT_REPRESENTATION == "index":
+        # Factors: [x, y, table_height, viewpoint_index]; use viewpoint 0 ('back') for 2D visualization
+        default_viewpoint = 0.0
+        grid_tensor = torch.cat(
+            [
+                grid_2d,
+                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), default_viewpoint, **tkwargs),
+            ],
+            dim=1,
+        )
+    else:
+        # Factors: [x, y, table_height, camera_azimuth, camera_elevation, camera_distance]
+        # Use camera params for viewpoint 0 ('back') for 2D visualization
+        vp = get_viewpoint_params(0)
+        cam_az = float(vp["azimuth"])
+        cam_el = float(vp["elevation"])
+        cam_dist = float(vp["distance"])
+        grid_tensor = torch.cat(
+            [
+                grid_2d,
+                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_az, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_el, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_dist, **tkwargs),
+            ],
+            dim=1,
+        )
     grid_shape = (grid_resolution, grid_resolution)
     
     # --- Create the validity mask ---
@@ -123,7 +214,8 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
         # Calculate acq values only for valid points
         if acq_func is not None and valid_grid_tensor.shape[0] > 0:
             try:
-                valid_acq_values = acq_func(valid_grid_tensor.reshape(-1, 1, 2)).numpy()
+                # Reshape for acquisition function: (N, 1, D) where D is the factor dimensionality
+                valid_acq_values = acq_func(valid_grid_tensor.unsqueeze(1)).numpy()
                 acq_values_flat[valid_mask_flat] = valid_acq_values
             except Exception as e:
                  print(f"Warning: {acq_func_name} evaluation failed: {e}")
@@ -150,14 +242,17 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
 
     # --- Plot 1: Surrogate Model Mean ---
     ax = axes[0]
+    # Get outcome range for colorbar
+    min_outcome, max_outcome, _ = get_outcome_range(task_name)
+    
     cmap_mean = plt.cm.viridis_r.copy()
     cmap_mean.set_bad(color='gray')
-    im = ax.imshow(mean_values, origin='lower', extent=plot_extent, cmap=cmap_mean, vmin=0, vmax=4, aspect='equal')
+    im = ax.imshow(mean_values, origin='lower', extent=plot_extent, cmap=cmap_mean, vmin=min_outcome, vmax=max_outcome, aspect='equal')
     fig.colorbar(im, ax=ax, label='Predicted Outcome (Mean)')
     # Scatter plot colored by outcome with white edge
     ax.scatter(
         df['x'], df['y'], c=df['continuous_outcome'], cmap='viridis_r', 
-        vmin=0, vmax=4, edgecolors='w', s=50, label='Tested Points', zorder=2
+        vmin=min_outcome, vmax=max_outcome, edgecolors='w', s=50, label='Tested Points', zorder=2
     )
     ax.set_title(f'Surrogate Model ({model_name}) (N={len(df)})')
     ax.set_xlabel('X Position')
@@ -176,7 +271,7 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
     # Scatter plot colored by outcome with white edge
     ax.scatter(
         df['x'], df['y'], c=df['continuous_outcome'], cmap='viridis_r', 
-        vmin=0, vmax=4, edgecolors='w', s=50, label='Tested Points', zorder=2
+        vmin=min_outcome, vmax=max_outcome, edgecolors='w', s=50, label='Tested Points', zorder=2
     )
     ax.set_title('Acquisition Function Landscape')
     ax.set_xlabel('X Position')
@@ -222,9 +317,40 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
     else:
         plot_extent = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
     
-    grid_tensor = get_design_points(grid_resolution, BOUNDS, tkwargs)
+    # Create 2D grid for visualization and expand to full factor space
+    x_grid = torch.linspace(BOUNDS[0, 0].item(), BOUNDS[1, 0].item(), grid_resolution, **tkwargs)
+    y_grid = torch.linspace(BOUNDS[0, 1].item(), BOUNDS[1, 1].item(), grid_resolution, **tkwargs)
+    xx, yy = torch.meshgrid(x_grid, y_grid, indexing='ij')
+    grid_2d = torch.stack([xx.flatten(), yy.flatten()], dim=1)
+    
+    # Expand to full factor space: use default values for table_height and viewpoint
+    default_table_height = 2.0
+    if VIEWPOINT_REPRESENTATION == "index":
+        default_viewpoint = 0.0
+        grid_tensor = torch.cat(
+            [
+                grid_2d,
+                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), default_viewpoint, **tkwargs),
+            ],
+            dim=1,
+        )
+    else:
+        vp = get_viewpoint_params(0)
+        cam_az = float(vp["azimuth"])
+        cam_el = float(vp["elevation"])
+        cam_dist = float(vp["distance"])
+        grid_tensor = torch.cat(
+            [
+                grid_2d,
+                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_az, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_el, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_dist, **tkwargs),
+            ],
+            dim=1,
+        )
     grid_shape = (grid_resolution, grid_resolution)
-    normalized_bounds = torch.tensor([[0.0] * 2, [1.0] * 2], **tkwargs)
     
     # Pre-calculate the valid mask
     valid_mask_flat = np.array([is_valid_point(p) for p in grid_tensor])
@@ -307,7 +433,7 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
         with torch.no_grad():
             if acq_func is not None and valid_grid_tensor.shape[0] > 0:
                 try:
-                    valid_acq_values = acq_func(valid_grid_tensor.reshape(-1, 1, 2)).numpy()
+                    valid_acq_values = acq_func(valid_grid_tensor.unsqueeze(1)).numpy()
                     acq_values_flat[valid_mask_flat] = valid_acq_values
                 except Exception as e:
                     if t == 2: # Print warning on first attempt
@@ -362,205 +488,363 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
     plt.close(fig)
 
 
-def plot_comparison(
-    results_list, gt_df, output_file, 
-    grid_resolution, model_name, plot_mode='error'
-):
+def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_file=None, model_name=None, task_name=None, 
+                           active_results_files=None, iid_results_files=None):
     """
-    Generates a plot comparing model errors or model means from one or more runs
-    (e.g., Active, IID) against a ground truth dataset.
+    Plots log-likelihood (LL) and RMSE on ground truth test set vs. trials.
+    Compares active testing, IID testing, and ground truth (line at RMSE=0).
+    
+    Supports multiple runs with variance shading. Uses saved models from eval.py at each trial instead of retraining.
+    
+    Args:
+        active_dfs: List of DataFrames with active testing results (or single DataFrame for backward compatibility)
+        iid_dfs: List of DataFrames with IID testing results (or single DataFrame for backward compatibility)
+        gt_df: DataFrame with ground truth test set
+        output_file: Output path for the plot
+        model_name: Surrogate model name to use
+        task_name: Task name for configuration
+        active_results_files: List of paths to active results CSV files (used to find saved models)
+        iid_results_files: List of paths to IID results CSV files (used to find saved models)
     """
-    print(f"Generating comparison plot (Mode: {plot_mode}, Model: {model_name}) -> {output_file}...")
-
-    # --- Create grid and validity mask ---
-    grid_tensor = get_design_points(grid_resolution, BOUNDS, tkwargs)
-    grid_shape = (grid_resolution, grid_resolution)
-    # This mask is still needed for the *model* plots
-    valid_mask_flat = np.array([is_valid_point(p) for p in grid_tensor])
-
-    # 1. Load Ground Truth data (FIXED LOGIC)
-    #    We now map each (x, y) point to its grid index.
+    print(f"Generating metrics vs trials plot -> {output_file}...")
+    import pickle
+    
+    # Prepare ground truth test set
     X_gt, Y_gt = _get_tensors_from_df(gt_df)
-    print(f"  Mapping Ground Truth data (N={len(X_gt)})...")
     if len(X_gt) < 1:
-         print("Error: Ground truth data is empty. Cannot generate comparison plot.")
-         return
-
-    # Create a nan-filled flat array for the GT map
-    mean_gt_flat = np.full(grid_tensor.shape[0], np.nan)
-    
-    # Create a fast lookup map from "(x_str, y_str)" -> grid_index
-    # We use formatted strings to handle floating point comparisons
-    grid_map = {
-        f"{p[0].item():.6f},{p[1].item():.6f}": i 
-        for i, p in enumerate(grid_tensor)
-    }
-
-    # Iterate through the GT dataframe and place outcomes in the correct grid slot
-    points_mapped = 0
-    for _, row in gt_df.iterrows():
-        x, y = row['x'], row['y']
-        outcome = row['continuous_outcome']
-        key = f"{x:.6f},{y:.6f}"
-        
-        if key in grid_map:
-            index = grid_map[key]
-            mean_gt_flat[index] = outcome
-            points_mapped += 1
-        else:
-            # This can happen if the GT data was made with a different grid
-            print(f"    Warning: GT point (x={x}, y={y}) not found in {grid_resolution}x{grid_resolution} grid.")
-
-    print(f"    Successfully mapped {points_mapped} GT points to the grid.")
-    if points_mapped == 0:
-        print("Error: No GT points matched the grid. Check --grid_resolution.")
+        print("Error: Ground truth test set is empty.")
         return
 
-    # Reshape the flat array to the 2D grid
-    mean_gt = mean_gt_flat.reshape(grid_shape)
-
-
-    # 2. Fit each model and calculate error/stats (This block is unchanged)
-    model_data_list = []
-    for label, df in results_list:
-        X_model, Y_model = _get_tensors_from_df(df)
-        if len(X_model) < 1:
-            print(f"  Skipping {label} model (N=0).")
-            continue
-        print(f"  Fitting {label} {model_name} model (N={len(X_model)})...")
-        model = fit_surrogate_model(X_model, Y_model, BOUNDS, model_name=model_name)
-
-        with torch.no_grad():
-            # --- Apply mask to model mean ---
-            mean_tensor_model = model.posterior(grid_tensor).mean.squeeze(-1)
-            if mean_tensor_model.ndim == 2:
-                mean_tensor_model = mean_tensor_model.mean(dim=0)
-                
-            mean_model_flat = mean_tensor_model.numpy()
-            # We use the valid_mask_flat here to mask out the model's predictions
-            # in the same invalid regions as the GT.
-            mean_model_flat[~valid_mask_flat] = np.nan
-            mean_model = mean_model_flat.reshape(grid_shape)
-
-        # Calculate error metrics regardless of plot_mode
-        # This works because both mean_model and mean_gt have NaNs
-        # in the same invalid locations.
-        error_map = np.abs(mean_model - mean_gt)
-        mae = np.nanmean(error_map) # MAE only over valid areas
-        print(f"    Valid Area MAE ({label}): {mae:.4f}")
-        
-        # Store the data
-        stats_dict = {
-            'label': label,
-            'n': len(X_model),
-            'mean_map': mean_model,
-            'error_map': error_map,
-            'mae': mae
-        }
-        
-        model_data_list.append(stats_dict)
-
-    # 3. Plotting (This block is unchanged)
-    num_models = len(model_data_list)
-    num_plots = num_models + 1 # +1 for GT
-
-    fig, axes = plt.subplots(1, num_plots, figsize=(9 * num_plots, 9))
-    if num_plots == 0:
-        print("Error: No models provided or fit successfully for comparison.")
-        return
-    elif num_plots == 1:
-        axes = [axes] # Make it iterable
-    else:
-        axes = axes.flatten()
-
-    # Calculate extent (same as before)
-    x_min, y_min = BOUNDS[0, 0].item(), BOUNDS[0, 1].item()
-    x_max, y_max = BOUNDS[1, 0].item(), BOUNDS[1, 1].item()
+    # Normalize inputs to lists for consistent processing
+    if active_dfs is None:
+        active_dfs = []
+    elif not isinstance(active_dfs, list):
+        active_dfs = [active_dfs]
     
-    if grid_resolution > 1:
-        x_step = (x_max - x_min) / (grid_resolution - 1)
-        y_step = (y_max - y_min) / (grid_resolution - 1)
-        half_x_step, half_y_step = x_step / 2.0, y_step / 2.0
-        plot_extent = [
-            x_min - half_x_step, x_max + half_x_step,
-            y_min - half_y_step, y_max + half_y_step
-        ]
-    else:
-        plot_extent = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
-
-    # Determine a common error scale (only if needed)
-    vmax_error = 1.0
-    if plot_mode == 'error':
-        if model_data_list:
-            valid_maxes = [
-                np.nanmax(stats['error_map']) for stats in model_data_list 
-                if 'error_map' in stats and not np.all(np.isnan(stats['error_map']))
-            ]
-            if valid_maxes:
-                vmax_error = max(valid_maxes)
-            if vmax_error == 0 or not valid_maxes: 
-                vmax_error = 1.0
-
-    # Define the colormaps
-    cmap_gt = plt.cm.viridis_r.copy()
-    cmap_gt.set_bad(color='gray')
-    cmap_err = plt.cm.hot.copy()
-    cmap_err.set_bad(color='gray')
-
-    # --- Plot 1...N: Model Plots (Error or Mean) ---
-    for i, stats in enumerate(model_data_list):
-        ax = axes[i]
+    if iid_dfs is None:
+        iid_dfs = []
+    elif not isinstance(iid_dfs, list):
+        iid_dfs = [iid_dfs]
+    
+    if active_results_files is None:
+        active_results_files = []
+    elif not isinstance(active_results_files, list):
+        active_results_files = [active_results_files]
+    
+    if iid_results_files is None:
+        iid_results_files = []
+    elif not isinstance(iid_results_files, list):
+        iid_results_files = [iid_results_files]
+    
+    # Ensure we have matching numbers of DataFrames and file paths
+    while len(active_results_files) < len(active_dfs):
+        active_results_files.append(None)
+    while len(iid_results_files) < len(iid_dfs):
+        iid_results_files.append(None)
+    
+    def process_runs(dfs, results_files, run_type):
+        """Process multiple runs and return metrics arrays."""
+        all_rmse_runs = []
+        all_ll_runs = []
+        all_trials_runs = []
         
-        if plot_mode == 'error':
-            im = ax.imshow(
-                stats['error_map'], origin='lower', extent=plot_extent, 
-                cmap=cmap_err, vmin=0, vmax=vmax_error, aspect='equal'
-            )
-            fig.colorbar(im, ax=ax, label='Absolute Error')
-            ax.set_title(
-                f"{stats['label']} Model Error (N={stats['n']})\n"
-                f"Valid Area MAE = {stats['mae']:.4f}"
-            )
+        print(f"  Processing {run_type} testing results ({len(dfs)} runs)...")
         
-        elif plot_mode == 'mean':
-            im = ax.imshow(
-                stats['mean_map'], origin='lower', extent=plot_extent, 
-                cmap=cmap_gt, vmin=0, vmax=4, aspect='equal' # Use GT cmap and scale
-            )
-            fig.colorbar(im, ax=ax, label='Predicted Outcome (Mean)')
-            ax.set_title(
-                f"{stats['label']} Model Mean (N={stats['n']})\n"
-                f"Valid Area MAE = {stats['mae']:.4f}"
-            )
+        for run_idx, (df, results_file) in enumerate(zip(dfs, results_files)):
+            rmse_values = []
+            ll_values = []
+            trials_values = []
             
-        # Common axis setup
-        ax.set_xlabel('X Position')
-        if i == 0:
-            ax.set_ylabel('Y Position')
-        ax.set_xlim(plot_extent[0], plot_extent[1])
-        ax.set_ylim(plot_extent[2], plot_extent[3])
-
-
-    # --- Plot N+1: Ground Truth Model ---
-    ax_gt = axes[num_models]
-    im_gt = ax_gt.imshow(
-        mean_gt, origin='lower', extent=plot_extent, 
-        cmap=cmap_gt, vmin=0, vmax=4, aspect='equal'
-    )
-    fig.colorbar(im_gt, ax=ax_gt, label='Actual Outcome (Mean)')
-    ax_gt.set_title(f'Ground Truth Data (N={points_mapped})') # Use points_mapped
-    ax_gt.set_xlabel('X Position')
-    if num_models == 0:
-        ax_gt.set_ylabel('Y Position')
-    ax_gt.set_xlim(plot_extent[0], plot_extent[1])
-    ax_gt.set_ylim(plot_extent[2], plot_extent[3])
-
-    plt.suptitle(f'Model Comparison vs. Ground Truth (N={points_mapped})', fontsize=16, y=0.96)
-    plt.tight_layout(rect=[0, 0.03, 1, 0.93])
-
-    plt.savefig(output_file, bbox_inches='tight')
+            results_file_base = results_file.replace('.csv', '') if results_file else None
+            
+            for trial_num in range(1, len(df) + 1):
+                # Try to load saved model from eval.py
+                model = None
+                if results_file_base:
+                    # Check if results file is in new structure: results/{eval_id}/results.csv
+                    # If so, look for models in results/{eval_id}/models/
+                    results_file_full = results_files[run_idx] if run_idx < len(results_files) else None
+                    if results_file_full:
+                        results_dir = os.path.dirname(results_file_full)
+                        # Try new structure first: results/{eval_id}/models/trial_{trial_num}_model.pkl
+                        if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
+                            model_path = os.path.join(results_dir, 'models', f'trial_{trial_num}_model.pkl')
+                        else:
+                            # Fall back to old structure
+                            model_path = f"{results_file_base}_trial_{trial_num}_model.pkl"
+                    else:
+                        # Fall back to old structure
+                        model_path = f"{results_file_base}_trial_{trial_num}_model.pkl"
+                    
+                    if os.path.exists(model_path):
+                        try:
+                            with open(model_path, 'rb') as f:
+                                model_data = pickle.load(f)
+                                model = model_data['model']
+                        except Exception as e:
+                            print(f"    Warning: Could not load model for run {run_idx+1}, trial {trial_num}: {e}")
+                
+                # If model not loaded, fall back to retraining
+                if model is None:
+                    current_df = df.iloc[:trial_num]
+                    if len(current_df) < 1:
+                        continue
+                    
+                    train_X, train_Y = _get_tensors_from_df(current_df)
+                    if len(train_X) < 2:  # Need at least 2 points to fit a model
+                        continue
+                    
+                    # Set seed to match eval.py behavior
+                    torch.manual_seed(trial_num)
+                    
+                    # Fit model
+                    model = fit_surrogate_model(train_X, train_Y, BOUNDS, model_name=model_name)
+                
+                # Calculate metrics on GT test set
+                rmse = calculate_rmse(model, X_gt, Y_gt)
+                ll = calculate_log_likelihood(model, X_gt, Y_gt)  # Log-likelihood
+                
+                rmse_values.append(rmse)
+                ll_values.append(ll)
+                trials_values.append(trial_num)
+            
+            all_rmse_runs.append(rmse_values)
+            all_ll_runs.append(ll_values)
+            all_trials_runs.append(trials_values)
+        
+        return all_rmse_runs, all_ll_runs, all_trials_runs
+    
+    # Process active and IID runs
+    active_rmse_runs, active_ll_runs, active_trials_runs = process_runs(active_dfs, active_results_files, "active")
+    iid_rmse_runs, iid_ll_runs, iid_trials_runs = process_runs(iid_dfs, iid_results_files, "IID")
+    
+    def compute_mean_std(runs_data, trials_runs):
+        """Compute mean and std across runs, handling different trial lengths."""
+        # Find max trial number across all runs
+        max_trial = max([max(trials) for trials in trials_runs] + [0]) if trials_runs else 0
+        
+        if max_trial == 0:
+            return [], [], []
+        
+        # Initialize arrays for mean and std
+        mean_values = []
+        std_values = []
+        trial_numbers = []
+        
+        for trial_num in range(1, max_trial + 1):
+            # Collect values for this trial across all runs
+            trial_values = []
+            for run_idx, trials in enumerate(trials_runs):
+                if trial_num in trials:
+                    trial_idx = trials.index(trial_num)
+                    trial_values.append(runs_data[run_idx][trial_idx])
+            
+            if len(trial_values) > 0:
+                mean_values.append(np.mean(trial_values))
+                std_values.append(np.std(trial_values))
+                trial_numbers.append(trial_num)
+        
+        return mean_values, std_values, trial_numbers
+    
+    # Compute statistics across runs
+    active_rmse_mean, active_rmse_std, active_trials = compute_mean_std(active_rmse_runs, active_trials_runs)
+    active_ll_mean, active_ll_std, _ = compute_mean_std(active_ll_runs, active_trials_runs)
+    
+    iid_rmse_mean, iid_rmse_std, iid_trials = compute_mean_std(iid_rmse_runs, iid_trials_runs)
+    iid_ll_mean, iid_ll_std, _ = compute_mean_std(iid_ll_runs, iid_trials_runs)
+    
+    # Create plots
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot 1: RMSE vs Trials
+    ax = axes[0]
+    
+    # Plot active testing with variance shading
+    if len(active_rmse_mean) > 0:
+        ax.plot(active_trials, active_rmse_mean, 'b-o', label='Active Testing', markersize=4, linewidth=1.5)
+        if len(active_dfs) > 1:  # Only show shading if multiple runs
+            ax.fill_between(active_trials, 
+                          np.array(active_rmse_mean) - np.array(active_rmse_std),
+                          np.array(active_rmse_mean) + np.array(active_rmse_std),
+                          alpha=0.2, color='blue')
+    
+    # Plot IID testing with variance shading
+    if len(iid_rmse_mean) > 0:
+        ax.plot(iid_trials, iid_rmse_mean, 'r-s', label='IID Testing', markersize=4, linewidth=1.5)
+        if len(iid_dfs) > 1:  # Only show shading if multiple runs
+            ax.fill_between(iid_trials,
+                          np.array(iid_rmse_mean) - np.array(iid_rmse_std),
+                          np.array(iid_rmse_mean) + np.array(iid_rmse_std),
+                          alpha=0.2, color='red')
+    
+    ax.axhline(y=0, color='k', linestyle='--', linewidth=1, label='Ground Truth (RMSE=0)')
+    ax.set_xlabel('Number of Trials', fontsize=12)
+    ax.set_ylabel('RMSE on Ground Truth Test Set', fontsize=12)
+    ax.set_title('RMSE vs. Trials', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    
+    # Plot 2: Log-Likelihood vs Trials
+    ax = axes[1]
+    
+    # Plot active testing with variance shading
+    if len(active_ll_mean) > 0:
+        ax.plot(active_trials, active_ll_mean, 'b-o', label='Active Testing', markersize=4, linewidth=1.5)
+        if len(active_dfs) > 1:  # Only show shading if multiple runs
+            ax.fill_between(active_trials,
+                          np.array(active_ll_mean) - np.array(active_ll_std),
+                          np.array(active_ll_mean) + np.array(active_ll_std),
+                          alpha=0.2, color='blue')
+    
+    # Plot IID testing with variance shading
+    if len(iid_ll_mean) > 0:
+        ax.plot(iid_trials, iid_ll_mean, 'r-s', label='IID Testing', markersize=4, linewidth=1.5)
+        if len(iid_dfs) > 1:  # Only show shading if multiple runs
+            ax.fill_between(iid_trials,
+                          np.array(iid_ll_mean) - np.array(iid_ll_std),
+                          np.array(iid_ll_mean) + np.array(iid_ll_std),
+                          alpha=0.2, color='red')
+    
+    ax.set_xlabel('Number of Trials', fontsize=12)
+    ax.set_ylabel('Log-Likelihood on Ground Truth Test Set', fontsize=12)
+    ax.set_title('Log-Likelihood vs. Trials', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    
+    runs_info = ""
+    if len(active_dfs) > 1 or len(iid_dfs) > 1:
+        runs_info = f" ({len(active_dfs)} active, {len(iid_dfs)} IID runs)"
+    
+    plt.suptitle(f'Model Performance Comparison (Model: {model_name}){runs_info}', fontsize=16, y=1.02)
+    plt.tight_layout()
+    plt.savefig(output_file, bbox_inches='tight', dpi=150)
     plt.close()
     print(f"Saved figure to {output_file}.")
+
+
+def create_rmse_summary_table(eval_df, gt_df, output_file, model_name, task_name=None, eval_results_file=None):
+    """
+    Creates a summary table of RMSE (prediction error) across all factor value combinations.
+    
+    Table structure:
+    - Rows: Camera viewpoint (0, 1, 2)
+    - Columns: Nested structure - Table heights (1, 2, 3), then for each table height,
+               position x values (0-1), then for each position x, position y values (0-1)
+    
+    Uses the final saved model from eval.py instead of retraining.
+    
+    Args:
+        eval_df: DataFrame with evaluation results (used to train the model)
+        gt_df: DataFrame with ground truth results (used to calculate errors)
+        output_file: Output path for the table (CSV file)
+        model_name: Surrogate model name to use
+        task_name: Task name for configuration
+        eval_results_file: Path to evaluation results CSV (used to find saved final model)
+    """
+    print(f"Generating RMSE summary table -> {output_file}...")
+    import pickle
+    
+    # Prepare ground truth data - create a lookup dictionary
+    gt_lookup = {}
+    for _, row in gt_df.iterrows():
+        key = (round(row['x'], 1), round(row['y'], 1), round(row['table_height']), round(row['viewpoint']))
+        gt_lookup[key] = row['continuous_outcome']
+    
+    # Get all factor values
+    x_vals = OBJECT_POS_X_VALUES.cpu().numpy()
+    y_vals = OBJECT_POS_Y_VALUES.cpu().numpy()
+    table_heights = TABLE_HEIGHT_VALUES.cpu().numpy()
+    viewpoints = VIEWPOINT_VALUES.cpu().numpy()
+    
+    # Try to load final saved model from eval.py
+    model = None
+    if eval_results_file:
+        # Check if results file is in new structure: results/{eval_id}/results.csv
+        # If so, look for models in results/{eval_id}/models/
+        results_dir = os.path.dirname(eval_results_file)
+        
+        # Try new structure first: results/{eval_id}/models/final_model.pkl
+        if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
+            final_model_path = os.path.join(results_dir, 'models', 'final_model.pkl')
+        else:
+            # Fall back to old structure: same directory as CSV
+            final_model_path = eval_results_file.replace('.csv', '_model.pkl')
+        
+        if os.path.exists(final_model_path):
+            try:
+                print(f"  Loading final saved model from '{final_model_path}'...")
+                with open(final_model_path, 'rb') as f:
+                    model_data = pickle.load(f)
+                    model = model_data['model']
+                    print(f"  Successfully loaded final model (trained on {model_data['train_X'].shape[0]} points).")
+            except Exception as e:
+                print(f"  Warning: Could not load final model: {e}")
+    
+    # If model not loaded, fall back to retraining
+    if model is None:
+        if len(eval_df) < 2:
+            print("Error: Need at least 2 evaluation points to fit a model.")
+            return None
+        
+        print(f"  Fitting model on {len(eval_df)} evaluation points (model not found)...")
+        train_X, train_Y = _get_tensors_from_df(eval_df)
+        model = fit_surrogate_model(train_X, train_Y, BOUNDS, model_name=model_name)
+    
+    # Build the table structure in a hierarchical format:
+    # Each row represents one factor combination: camera_viewpoint, table_height, x, y, RMSE
+    # Include ALL factor combinations in the design space
+    # For each combination, get model prediction and calculate RMSE vs ground truth where available
+    all_rows = []
+    
+    # Move model to appropriate device
+    device = next(model.parameters()).device
+    
+    for viewpoint in viewpoints:
+        for table_height in table_heights:
+            for x in x_vals:
+                for y in y_vals:
+                    # Always get model prediction for this factor combination
+                    test_point = torch.tensor([[x, y, table_height, viewpoint]], **tkwargs)
+                    test_point = test_point.to(device)
+                    with torch.no_grad():
+                        posterior = model.posterior(test_point)
+                        pred_mean = posterior.mean
+                        # Handle shape
+                        while pred_mean.ndim > 1 and pred_mean.shape[-1] == 1:
+                            pred_mean = pred_mean.squeeze(-1)
+                        if pred_mean.ndim == 2:
+                            pred_mean = pred_mean.mean(dim=0)
+                        pred_value = pred_mean.item()
+                    
+                    # Initialize row data
+                    row_data = {
+                        'camera_viewpoint': int(viewpoint),
+                        'table_height': int(table_height),
+                        'x': x,
+                        'y': y,
+                        'RMSE': np.nan  # Default to NaN if no ground truth
+                    }
+                    
+                    # Calculate RMSE if ground truth is available
+                    key = (round(float(x), 1), round(float(y), 1), round(float(table_height)), round(float(viewpoint)))
+                    if key in gt_lookup:
+                        gt_value = gt_lookup[key]
+                        # Calculate absolute error (RMSE for a single point is just absolute error)
+                        error = abs(pred_value - gt_value)
+                        row_data['RMSE'] = error
+                    
+                    all_rows.append(row_data)
+    
+    # Create DataFrame
+    summary_df = pd.DataFrame(all_rows)
+    
+    # Save to CSV
+    summary_df.to_csv(output_file, index=False)
+    print(f"Saved RMSE summary table to {output_file}.")
+    print(f"Table shape: {summary_df.shape}")
+    print(f"Columns: camera_viewpoint, table_height, x, y, RMSE")
+    
+    return summary_df
 
 
 def main():
@@ -572,6 +856,7 @@ def main():
     parser_points = subparsers.add_parser('plot-points', help='Plot tested points colored by outcome')
     parser_points.add_argument('--results_file', type=str, required=True, help='Path to the evaluation_results.csv file')
     parser_points.add_argument('--output_file', type=str, default='visualizations/robo_eval/tested_points.png', help='Output file path for the plot')
+    parser_points.add_argument('--task', type=str, default=None, help='Task name for configuration')
 
     # --- Command: plot-active ---
     parser_active = subparsers.add_parser('plot-active', help='Plot active learning diagnostics (model mean, acqf)')
@@ -628,6 +913,24 @@ def main():
         help="Type of plot to generate: 'error' (vs GT) or 'mean' (model output)"
     )
     
+    # --- Command: plot-metrics-vs-trials ---
+    parser_metrics = subparsers.add_parser('plot-metrics-vs-trials', help='Plot log-likelihood and RMSE vs trials for active and IID testing')
+    parser_metrics.add_argument('--active_results_file', type=str, default=None, help='Path to active testing results CSV (single run, for backward compatibility)')
+    parser_metrics.add_argument('--iid_results_file', type=str, default=None, help='Path to IID testing results CSV (single run, for backward compatibility)')
+    parser_metrics.add_argument('--add_active_results_file', action='append', help='Add an active testing results CSV file (can be used multiple times for multiple runs)')
+    parser_metrics.add_argument('--add_iid_results_file', action='append', help='Add an IID testing results CSV file (can be used multiple times for multiple runs)')
+    parser_metrics.add_argument('--gt_results_file', type=str, required=True, help='Path to ground truth test set CSV')
+    parser_metrics.add_argument('--output_file', type=str, default='visualizations/robo_eval/metrics_vs_trials.png', help='Output file path')
+    parser_metrics.add_argument('--model_name', type=str, default='SingleTaskGP', help='Surrogate model name')
+    parser_metrics.add_argument('--task', type=str, default=None, help='Task name for configuration')
+
+    # --- Command: create-rmse-table ---
+    parser_table = subparsers.add_parser('create-rmse-table', help='Create RMSE summary table across all factor combinations')
+    parser_table.add_argument('--eval_results_file', type=str, required=True, help='Path to evaluation results CSV (used to train model)')
+    parser_table.add_argument('--gt_results_file', type=str, required=True, help='Path to ground truth results CSV (used to calculate errors)')
+    parser_table.add_argument('--output_file', type=str, default='visualizations/robo_eval/rmse_summary_table.csv', help='Output CSV file path')
+    parser_table.add_argument('--model_name', type=str, default='SingleTaskGP', help='Surrogate model name')
+    parser_table.add_argument('--task', type=str, default=None, help='Task name for configuration')
 
     args = parser.parse_args()
 
@@ -640,11 +943,12 @@ def main():
     # --- Execute the chosen command ---
     if args.command == 'plot-points':
         df = _load_data(args.results_file)
-        plot_tested_points(df, args.output_file)
+        plot_tested_points(df, args.output_file, task_name=getattr(args, 'task', None))
 
     elif args.command == 'plot-active':
         df = _load_data(args.results_file)
-        plot_active_learning(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name)
+        plot_active_learning(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name, 
+                            results_file=args.results_file, task_name=getattr(args, 'task', None))
 
     elif args.command == 'animate-active':
         df = _load_data(args.results_file)
@@ -660,6 +964,50 @@ def main():
                 df = _load_data(filepath)
                 results_list.append((label, df))
         plot_comparison(results_list, gt_df, args.output_file, args.grid_resolution, args.model_name, args.plot_mode)
+
+    elif args.command == 'plot-metrics-vs-trials':
+        gt_df = _load_data(args.gt_results_file)
+        
+        # Collect active results files
+        active_results_files = []
+        active_dfs = []
+        if args.active_results_file:
+            active_results_files.append(args.active_results_file)
+            active_dfs.append(_load_data(args.active_results_file))
+        if args.add_active_results_file:
+            for filepath in args.add_active_results_file:
+                active_results_files.append(filepath)
+                active_dfs.append(_load_data(filepath))
+        
+        # Collect IID results files
+        iid_results_files = []
+        iid_dfs = []
+        if args.iid_results_file:
+            iid_results_files.append(args.iid_results_file)
+            iid_dfs.append(_load_data(args.iid_results_file))
+        if args.add_iid_results_file:
+            for filepath in args.add_iid_results_file:
+                iid_results_files.append(filepath)
+                iid_dfs.append(_load_data(filepath))
+        
+        if len(active_dfs) == 0 and len(iid_dfs) == 0:
+            print("Error: At least one active or IID results file must be provided.")
+            return
+        
+        plot_metrics_vs_trials(active_dfs=active_dfs if active_dfs else None,
+                              iid_dfs=iid_dfs if iid_dfs else None,
+                              gt_df=gt_df,
+                              output_file=args.output_file,
+                              model_name=args.model_name,
+                              task_name=args.task,
+                              active_results_files=active_results_files if active_results_files else None,
+                              iid_results_files=iid_results_files if iid_results_files else None)
+
+    elif args.command == 'create-rmse-table':
+        eval_df = _load_data(args.eval_results_file)
+        gt_df = _load_data(args.gt_results_file)
+        create_rmse_summary_table(eval_df, gt_df, args.output_file, args.model_name, args.task, 
+                                 eval_results_file=args.eval_results_file)
 
 
 if __name__ == "__main__":

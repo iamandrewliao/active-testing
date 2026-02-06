@@ -2,6 +2,14 @@ import torch
 import argparse
 import pandas as pd
 
+# Import factor configuration
+from factors_config import (
+    get_viewpoint_name,
+    FACTOR_COLUMNS,
+    VIEWPOINT_REPRESENTATION,
+    get_viewpoint_index_from_params,
+)
+
 from botorch.models.transforms import Normalize, Standardize
 from botorch.models import SingleTaskGP
 from botorch.models.kernels import InfiniteWidthBNNKernel
@@ -137,6 +145,10 @@ def optimize_acq_func(acq_func, design_space, discrete=True, normalized_bounds=N
 def calculate_rmse(model, X_test, Y_test):
     """Calculates the Root Mean Squared Error on the test set."""  
     model.eval()
+    # Move inputs to model's device
+    device = next(model.parameters()).device
+    X_test = X_test.to(device)
+    Y_test = Y_test.to(device)
     posterior = model.posterior(X_test)
     mean = posterior.mean
     
@@ -159,6 +171,10 @@ def calculate_rmse(model, X_test, Y_test):
 def calculate_log_likelihood(model, X_test, Y_test):
     """Calculates the Mean Log-Likelihood (Log Predictive Density) on the test set."""
     model.eval()
+    # Move inputs to model's device
+    device = next(model.parameters()).device
+    X_test = X_test.to(device)
+    Y_test = Y_test.to(device)
     posterior = model.posterior(X_test)
     pred_dist = posterior.distribution
     
@@ -222,10 +238,15 @@ def calculate_wasserstein_distance(model, X_test, Y_test):
     
     return wasserstein_distance(y_true_np, y_pred_np)
 
-def get_design_points(resolution, bounds, tkwargs):
+
+
+def get_design_points_test(resolution, bounds, tkwargs):
     """
     Creates a tensor of all points for arbitrary D dimensions.
     bounds: [2, D] tensor
+    
+    NOTE: This function is for test_active.py (test functions).
+    For robot evaluation, use get_design_points_robot() from factors_config.py instead.
     """
     dims = bounds.shape[1]
     
@@ -243,46 +264,90 @@ def get_design_points(resolution, bounds, tkwargs):
     print(f"Generated {all_points.shape[0]} total design points across {dims} dimensions.")
     return all_points
 
-# CHANGE FOR YOUR SETUP
-def is_valid_point(point):
-    """Automatically filters out any point past my UR5 arm's reachability (approximated by a straight line)"""
-    # Equation of the boundary line: y = 1.35x - 0.475
-    # A point is 'invalid' if it's on the right side of the line
-    x, y = point[0].item(), point[1].item()
-    # Calculate if the point is in the invalid region
-    # is_invalid = (y <= 1.35*x - 0.475) and (x >= 0.35)
-    is_invalid = (y <= 1.5*x - 0.75) and (x >= 0.5) # TO DO: comment this out and replace with the more accurate one above
-    
-    return not is_invalid  # Return True if the point is valid
 
 
-def run_evaluation(point, max_steps):
+def run_evaluation(point, max_steps, task_name=None):
     """
     Simulates a robot evaluation trial for a given point (a combination of factor values).
     Prompts the user for the outcome.
+    
+    Args:
+        point: Factor values for the evaluation
+        max_steps: Maximum number of steps allowed
+        task_name: Name of the task (uses default if None)
     """
-    # Create a string representation of the point "coordinates" aka factor values
-    coords_str = ", ".join([f"{val:.3f}" for val in point.tolist()])
-    print("-" * 30)
-    print(f"🤖 Running trial at position: ({coords_str})")
+    from factors_config import (
+        DIMS,
+        FACTOR_COLUMNS,
+        VIEWPOINT_REPRESENTATION,
+        get_outcome_range,
+        get_success_outcome,
+        get_outcome_descriptions,
+    )
+    
+    # Create a string representation of the point using factor names from config
+    if point.shape[0] == DIMS and DIMS == len(FACTOR_COLUMNS):
+        # factors used in this work; change if needed
+        x = point[0].item()
+        y = point[1].item()
+        table_height = point[2].item()
+
+        print("-" * 30)
+        print(f"🤖 Running trial:")
+        print(f"   Object position: ({x:.1f}, {y:.1f})")
+        print(f"   Table height: {table_height:.0f} inches")
+
+        if VIEWPOINT_REPRESENTATION == "index":
+            # Last dimension is the discrete viewpoint index {0,1,2}
+            viewpoint_idx = int(point[3].item())
+            viewpoint_name = get_viewpoint_name(viewpoint_idx)
+            print(f"   Camera viewpoint: {viewpoint_name} (index {viewpoint_idx})")
+        elif VIEWPOINT_REPRESENTATION == "params":
+            # Last three dimensions are (azimuth, elevation, distance)
+            cam_az = point[3].item()
+            cam_el = point[4].item()
+            cam_dist = point[5].item()
+            viewpoint_idx = get_viewpoint_index_from_params(cam_az, cam_el, cam_dist)
+            if viewpoint_idx is not None:
+                viewpoint_name = get_viewpoint_name(viewpoint_idx)
+                print(
+                    f"   Camera viewpoint: {viewpoint_name} "
+                    f"(index {viewpoint_idx}, az={cam_az:.1f}, el={cam_el:.1f}, dist={cam_dist:.1f})"
+                )
+            else:
+                # Fallback: parameters don't match any known viewpoint (should not happen if is_valid_point is used)
+                print(
+                    f"   Camera viewpoint: unknown "
+                    f"(az={cam_az:.1f}, el={cam_el:.1f}, dist={cam_dist:.1f})"
+                )
+    else:
+        raise ValueError(f"Point dimension {point.shape[0]} does not match expected DIMS={DIMS}")
+    
+    # Get task-specific outcome configuration
+    min_outcome, max_outcome, increment = get_outcome_range(task_name)
+    success_outcome = get_success_outcome(task_name)
+    descriptions = get_outcome_descriptions(task_name)
     
     # --- Get continuous outcome ---
+    valid_outcomes = [min_outcome + i * increment for i in range(int((max_outcome - min_outcome) / increment) + 1)]
+    
     while True:
         try:
-            print("Enter continuous outcome (0.5 increments):")
-            print("  0=failed completely, 1=moved to block, 2=grasped block, 3=moved to bowl, 4=dropped (success)")
-            continuous_outcome = float(input("Enter outcome (0-4): "))
+            print(f"Enter continuous outcome ({increment} increments):")
+            for outcome_val in valid_outcomes:
+                desc = descriptions.get(outcome_val, "")
+                print(f"  {outcome_val}={desc}")
+            continuous_outcome = float(input(f"Enter outcome ({min_outcome}-{max_outcome}): "))
             
-            # check if in [0, 0.5, ..., 4]
-            if continuous_outcome in [i*0.5 for i in range(9)]:
+            if continuous_outcome in valid_outcomes:
                 break
             else:
-                print("Invalid input. Please enter a number between 0 and 4 in 0.5 increments.")
+                print(f"Invalid input. Please enter a number in {valid_outcomes}")
         except ValueError:
             print("Invalid input. Please enter a number.")
             
     # --- Derive binary outcome ---
-    binary_outcome = 1.0 if continuous_outcome == 4.0 else 0.0
+    binary_outcome = 1.0 if continuous_outcome == success_outcome else 0.0
 
     # --- Get number of steps taken ---
     if binary_outcome == 0:
@@ -302,30 +367,25 @@ def run_evaluation(point, max_steps):
     return binary_outcome, continuous_outcome, steps_taken
 
 
-def load_vla_data(vla_data_path):
+def load_training_data(training_data_factors_path):
     """
     Loads training data from a CSV file.
     Returns a (N, D) tensor.
     """
-    if vla_data_path is None:
+    if training_data_factors_path is None:
         return None
-    print(f"Loading training distribution from {vla_data_path}...")
+    print(f"Loading training distribution from {training_data_factors_path}...")
     try:
-        df = pd.read_csv(vla_data_path)
+        df = pd.read_csv(training_data_factors_path)
         
-        # Try to find factor columns
-        factor_cols = [c for c in df.columns if c.startswith('factor_')]
-        if not factor_cols:
-            if {'x', 'y'}.issubset(df.columns):
-                factor_cols = ['x', 'y']
-            else:
-                # If no standard names, assume all columns are factors? 
-                # Or raise error. Let's assume all numeric columns for flexibility or error.
-                # Safer to raise error to enforce schema.
-                raise ValueError("CSV must have 'factor_N' or 'x','y' columns.")
+        # Check for factor columns from config
+        if set(FACTOR_COLUMNS).issubset(df.columns):
+            factor_cols = FACTOR_COLUMNS
+        else:
+            raise ValueError(f"CSV must have {FACTOR_COLUMNS} columns.")
 
-        vla_tensor = torch.tensor(df[factor_cols].values, dtype=torch.double)
-        return vla_tensor
+        training_tensor = torch.tensor(df[factor_cols].values, dtype=torch.double)
+        return training_tensor
     except Exception as e:
         print(f"Error loading training data: {e}")
         return None
@@ -338,7 +398,7 @@ def compute_knn_distance(target_points, reference_points, k=1):
     
     Args:
         target_points: (N, 2) tensor of points to evaluate
-        reference_points: (M, 2) tensor of VLA training data
+        reference_points: (M, D) tensor of training data
         k: Which neighbor to use (default 1 = nearest neighbor)
         
     Returns:
@@ -368,7 +428,7 @@ def compute_knn_distance(target_points, reference_points, k=1):
     
 #     Args:
 #         target_points: (N, 2) tensor of points to evaluate
-#         reference_points: (M, 2) tensor of VLA training data
+#         reference_points: (M, D) tensor of training data
 #         k: Which neighbor to use (default 1 = nearest neighbor)
         
 #     Returns:
@@ -423,14 +483,13 @@ def parse_args():
         "--mode",
         type=str,
         choices=["iid", "active", "loaded", "brute_force"],
-        required=True,
         help="The sampling strategy to use."
     )
     parser.add_argument(
         "--resolution",
         type=int,
         default=10,
-        help="The resolution (N) for the N^D design space in 'brute_force' or 'iid' mode."
+        help="The resolution (N) for a continuous N^D design space in 'brute_force' or 'iid' mode."
     )
     parser.add_argument(
         "--num_evals",
@@ -447,25 +506,29 @@ def parse_args():
     parser.add_argument(
         "--max_steps",
         type=int,
-        default=35,
         help="Maximum number of steps allowed per evaluation."
+    )
+    parser.add_argument(
+        "--eval_id",
+        type=str,
+        default=None,
+        help="Evaluation ID. If not provided, will be auto-generated from timestamp. All outputs will be saved in results/{eval_id}/"
     )
     parser.add_argument(
         "--output_file",
         type=str,
-        default="evaluation_results.csv",
-        help="Path to save the eval results as CSV file."
+        default=None,
+        help="Path to save the eval results as CSV file. If not provided, will be saved as results/{eval_id}/results.csv"
     )
     parser.add_argument(
         "--save_points",
         type=str,
         default=None,
-        help="Path to save only the eval points to a CSV file. Note that eval points are already included in eval results."
+        help="Path to save only the eval points to a CSV file. If not provided and --eval_id is set, will be saved as results/{eval_id}/points.csv. Note that eval points are already included in eval results."
     )
     parser.add_argument(
         "--load_path",
         type=str,
-        default=None,
         help="Path to a CSV file from which to load evaluation points. Could be the full eval results CSV file or just the eval points CSV file."
     )
     parser.add_argument(
@@ -479,16 +542,19 @@ def parse_args():
         help="Acquisition function to use (e.g. 'qBALD')."
     )
     parser.add_argument(
-        '--vla_data_path',
+        '--training_data_factors_path',
         type=str,
-        default=None,
-        help="Path to CSV containing VLA training data (factor values) that help compute OOD metrics on eval data."
+        help="Path to CSV containing robot policy training data (factor values) that help compute OOD metrics on eval data."
+    )
+    parser.add_argument(
+        '--task',
+        type=str,
+        help="Task name for outcome configuration. If not specified, uses default task from factors_config.py."
     )
     parser.add_argument(
         '--ood_metric',
         type=str,
         choices=['knn', 'kde'],
-        default='knn',
         help="Metric to use for the OOD feature (distance to nearest neighbor or density)."
     )
     parser.add_argument(

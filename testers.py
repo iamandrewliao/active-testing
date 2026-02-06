@@ -12,13 +12,15 @@ import numpy as np
 import torch
 import time
 
-from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_func, load_vla_data, compute_knn_distance, compute_kde_density
+from utils import fit_surrogate_model, get_acquisition_function, optimize_acq_func, load_training_data, compute_knn_distance, compute_kde_density
+from factors_config import get_success_outcome
+from factors_config import FACTOR_COLUMNS
 
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name, vla_data_path=None, ood_metric="knn", use_train_data_for_surrogate=False):
+    def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name, training_data_factors_path=None, ood_metric="knn", use_train_data_for_surrogate=False, task_name=None):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
@@ -32,32 +34,32 @@ class ActiveTester:
         else:
             self.mc_points = mc_points
         self.available_design_space = self.full_design_space.clone() # mutable design choices (reduces in size with each sample)
-        self.vla_points = load_vla_data(vla_data_path) # contains factor values of the training data as columns
-        if self.vla_points is not None:
-            self.vla_points = self.vla_points.to(**tkwargs)
+        self.training_points = load_training_data(training_data_factors_path) # contains factor values of the training data as columns
+        if self.training_points is not None:
+            self.training_points = self.training_points.to(**tkwargs)
             if use_train_data_for_surrogate:
-                # Create Y for VLA training data
+                # Create Y for training data
                 # (assuming the robot policy was trained 1) only on successful demos 2) corresponding to outcome = success_outcome)
-                success_outcome = 4.0
-                print(f"Adding VLA training data factors to surrogate, assuming only successful demos with outcome = {success_outcome}")
-                vla_Y = torch.full((self.vla_points.shape[0], 1), success_outcome, **tkwargs)
+                success_outcome = get_success_outcome(task_name)
+                print(f"Adding training data factors to surrogate, assuming only successful demos with outcome = {success_outcome}")
+                training_Y = torch.full((self.training_points.shape[0], 1), success_outcome, **tkwargs)
                 # Append to training data
-                self.train_X = torch.cat([self.train_X, self.vla_points], dim=0)
-                self.train_Y = torch.cat([self.train_Y, vla_Y], dim=0)                
+                self.train_X = torch.cat([self.train_X, self.training_points], dim=0)
+                self.train_Y = torch.cat([self.train_Y, training_Y], dim=0)                
         self.ood_metric = ood_metric # some measure of likelihood of drawing evaluation factor combo f from the training data distribution
     
     def add_feature(self, points):
         """
         Adds the OOD feature (distance or density) to a set of points (factor values).
         """
-        if self.vla_points is None:
+        if self.training_points is None:
             return points
         if self.ood_metric == "knn":
-            # Calculate distance to nearest VLA neighbor
-            feature = compute_knn_distance(points, self.vla_points, k=1)
+            # Calculate distance to nearest training neighbor
+            feature = compute_knn_distance(points, self.training_points, k=1)
         elif self.ood_metric == "kde":
             # Calculate probability density
-            feature = compute_kde_density(points, self.vla_points)
+            feature = compute_kde_density(points, self.training_points)
         else:
             # Fallback or unknown metric, return unaugmented points
             return points
@@ -75,7 +77,7 @@ class ActiveTester:
         # Augment the evaluation points (train_X) with the OOD feature
         train_X_final = self.train_X
         bounds_final = self.bounds
-        if self.vla_points is not None:
+        if self.training_points is not None:
             train_X_final = self.add_feature(self.train_X)
             # We need to update bounds for the feature.
             # We can calculate the feature on the full design space to find the max range.
@@ -100,7 +102,7 @@ class ActiveTester:
         design_space_input = self.available_design_space
         mc_points_input = self.mc_points
 
-        if self.vla_points is not None:
+        if self.training_points is not None:
             design_space_input = self.add_feature(self.available_design_space)
             if self.mc_points is not None:
                 mc_points_input = self.add_feature(self.mc_points)
@@ -158,13 +160,11 @@ class ListIteratorSampler:
             print(f"Loading evaluation points from {filepath}...")
             try:
                 df = pd.read_csv(filepath)
-                # Look for 'factor_0', 'factor_1'... otherwise 'x', 'y'
-                factor_cols = [c for c in df.columns if c.startswith('factor_')]
-                if not factor_cols:
-                    if {'x', 'y'}.issubset(df.columns):
-                        factor_cols = ['x', 'y']
-                    else:
-                        raise ValueError("CSV file must contain 'factor_N' columns or 'x' and 'y'.")
+                # Look for factor columns from config
+                if set(FACTOR_COLUMNS).issubset(df.columns):
+                    factor_cols = FACTOR_COLUMNS
+                else:
+                    raise ValueError(f"CSV file must contain {FACTOR_COLUMNS} columns.")
                 
                 print(f"identified factor columns: {factor_cols}")
                 # Convert directly to a single [N, D] tensor

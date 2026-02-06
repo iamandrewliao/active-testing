@@ -161,10 +161,10 @@ if __name__ == "__main__":
         help="Number of simulated points to sample from."
     )
     parser.add_argument(
-        '--vla_data_path',
+        '--training_data_factors_path',
         type=str,
         default=None,
-        help="Path to CSV containing VLA training data (factor values) that help compute OOD metrics on eval data."
+        help="Path to CSV containing training data (factor values) that help compute OOD metrics on eval data."
     )
     parser.add_argument(
         '--ood_metric',
@@ -224,7 +224,7 @@ if __name__ == "__main__":
         bounds=BOUNDS, n=128, q=1
     ).squeeze(1).to(**tkwargs)
     active_sampler = ActiveTester(X_init, Y_init, BOUNDS, sim_pts, mc_points, args.model_name, args.acq_func_name, 
-                                  vla_data_path=args.vla_data_path, ood_metric=args.ood_metric)
+                                  training_data_factors_path=args.training_data_factors_path, ood_metric=args.ood_metric)
     iid_sampler = IIDSampler(sim_pts)
 
     # Active test
