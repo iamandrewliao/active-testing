@@ -150,20 +150,25 @@ def get_design_points_robot():
 
     In both cases, only the 3 discrete camera viewpoints in CAMERA_VIEWPOINTS are used,
     so the design space contains exactly 11 x 11 x 3 x 3 = 1089 combinations.
+
+    Iteration order (e.g. for brute_force): slowest to fastest =
+    camera viewpoint (back, right, left) -> table height (1,2,3) -> object x -> object y.
+    So for a fixed viewpoint and table height we sweep all (x,y) positions first.
     """
-    # Create all combinations over x, y, table_height, and viewpoint index (0,1,2)
-    x_grid, y_grid, h_grid, v_grid = torch.meshgrid(
+    # Meshgrid order (slowest to fastest) = viewpoint, table_height, x, y so that
+    # flatten() gives: for viewpoint in [back, right, left]: for h in [1,2,3]: for x: for y
+    v_grid, h_grid, x_grid, y_grid = torch.meshgrid(
+        VIEWPOINT_VALUES,
+        TABLE_HEIGHT_VALUES,
         OBJECT_POS_X_VALUES,
         OBJECT_POS_Y_VALUES,
-        TABLE_HEIGHT_VALUES,
-        VIEWPOINT_VALUES,
         indexing="ij",
     )
 
+    v_flat = v_grid.flatten().long()  # indices 0,1,2
+    h_flat = h_grid.flatten()
     x_flat = x_grid.flatten()
     y_flat = y_grid.flatten()
-    h_flat = h_grid.flatten()
-    v_flat = v_grid.flatten().long()  # indices 0,1,2
 
     if VIEWPOINT_REPRESENTATION == "index":
         # Factors are [x, y, table_height, viewpoint_index]
@@ -268,12 +273,39 @@ def get_outcome_descriptions(task_name=None):
     return config['descriptions']
 
 # ============================================================================
+# Reachability (must match data_collection/factors_utils.py)
+# ============================================================================
+# Dictionary defining the reachability line for each table height (how far the
+# robot arm can reach). Invalid condition: (y <= mx + c) and (x >= x_thresh).
+REACHABILITY_BOUNDARIES = {
+    1: {"m": 0.857, "c": -0.257, "x_thresh": 0.0},
+    2: {"m": 0.867, "c": -0.2167, "x_thresh": 0.15},
+    3: {"m": 0.85, "c": -0.17, "x_thresh": 0.2},
+}
+
+
+def _is_reachable(x, y, table_height):
+    """
+    Returns True if (x, y) is reachable at the given table height.
+    Logic must match data_collection/factors_utils.is_valid_point().
+    """
+    h = int(round(table_height))
+    if h not in REACHABILITY_BOUNDARIES:
+        return True  # unknown height: allow (safety fallback)
+    params = REACHABILITY_BOUNDARIES[h]
+    m, c, x_thresh = params["m"], params["c"], params["x_thresh"]
+    is_invalid = (y <= m * x + c) and (x >= x_thresh)
+    return not is_invalid
+
+
+# ============================================================================
 # Validation
 # ============================================================================
 
 def is_valid_point(point):
     """
-    Validates a point in the robot policy evaluation factor space.
+    Validates a point in the robot policy evaluation factor space, including
+    reachability.
 
     Representation depends on VIEWPOINT_REPRESENTATION:
     - \"index\":  [x, y, table_height, viewpoint] with viewpoint in {0,1,2}
@@ -296,6 +328,10 @@ def is_valid_point(point):
 
     # Check table_height is 1, 2, or 3
     if table_height not in [1.0, 2.0, 3.0]:
+        return False
+
+    # Reachability: same as data collection (factors_utils.is_valid_point)
+    if not _is_reachable(x, y, table_height):
         return False
 
     if VIEWPOINT_REPRESENTATION == "index":

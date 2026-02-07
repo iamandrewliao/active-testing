@@ -50,10 +50,10 @@ def _get_tensors_from_df(df):
     return train_X, train_Y
 
 
-def plot_tested_points(df, output_file, task_name=None):
+def plot_tested_points_xy(df, output_file, task_name=None):
     """
     Plots a simple scatter plot of tested points, colored by their outcome.
-    For 4D factors, shows 2D projection (x vs y).
+    Only shows factors x and y (2D).
     """
     print(f"Generating tested points plot -> {output_file}...")
     plt.figure(figsize=(10, 8))
@@ -85,10 +85,11 @@ def plot_tested_points(df, output_file, task_name=None):
     print(f"Saved figure to {output_file}.")
 
 
-def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_name, results_file=None, task_name=None):
+def plot_active_learning_xy(df, output_file, grid_resolution, model_name, acq_func_name, table_height, camera_viewpoint, results_file=None, task_name=None):
     """
     Plots the surrogate model mean and acquisition function landscape
     for an active testing run.
+    Only shows factors x and y (2D).
     
     Args:
         df: DataFrame with evaluation results
@@ -96,6 +97,8 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
         grid_resolution: Resolution for the grid (for 2D projection)
         model_name: Model name (for fallback if model not saved)
         acq_func_name: Acquisition function name
+        table_height: table height value to use for visualization
+        camera_viewpoint: viewpoint index value (e.g. 0, 1, 2) to use for visualization
         results_file: Path to results CSV (used to find saved model)
         task_name: Task name for outcome range
     """
@@ -160,30 +163,28 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
     xx, yy = torch.meshgrid(x_grid, y_grid, indexing='ij')
     grid_2d = torch.stack([xx.flatten(), yy.flatten()], dim=1)
     
-    # Expand to full factor space: use default values for table_height and viewpoint
-    default_table_height = 2.0  # Middle value
+    # Expand to full factor space: use given values for table_height and viewpoint
     if VIEWPOINT_REPRESENTATION == "index":
-        # Factors: [x, y, table_height, viewpoint_index]; use viewpoint 0 ('back') for 2D visualization
-        default_viewpoint = 0.0
+        # Factors: [x, y, table_height, viewpoint_index]
         grid_tensor = torch.cat(
             [
                 grid_2d,
-                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
-                torch.full((grid_2d.shape[0], 1), default_viewpoint, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), camera_viewpoint, **tkwargs),
             ],
             dim=1,
         )
     else:
         # Factors: [x, y, table_height, camera_azimuth, camera_elevation, camera_distance]
         # Use camera params for viewpoint 0 ('back') for 2D visualization
-        vp = get_viewpoint_params(0)
+        vp = get_viewpoint_params(camera_viewpoint)
         cam_az = float(vp["azimuth"])
         cam_el = float(vp["elevation"])
         cam_dist = float(vp["distance"])
         grid_tensor = torch.cat(
             [
                 grid_2d,
-                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), table_height, **tkwargs),
                 torch.full((grid_2d.shape[0], 1), cam_az, **tkwargs),
                 torch.full((grid_2d.shape[0], 1), cam_el, **tkwargs),
                 torch.full((grid_2d.shape[0], 1), cam_dist, **tkwargs),
@@ -288,7 +289,7 @@ def plot_active_learning(df, output_file, grid_resolution, model_name, acq_func_
     print(f"Saved figure to {output_file}.")
 
 
-def animate_active_learning(df, output_file, grid_resolution, model_name, acq_func_name, interval=500):
+def animate_active_learning_xy(df, output_file, grid_resolution, model_name, acq_func_name, table_height, camera_viewpoint, interval=500):
     """
     Generates an MP4 animation showing the evolution of the surrogate model
     and acquisition function during an active testing run, using the 'mode' column.
@@ -323,15 +324,13 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
     xx, yy = torch.meshgrid(x_grid, y_grid, indexing='ij')
     grid_2d = torch.stack([xx.flatten(), yy.flatten()], dim=1)
     
-    # Expand to full factor space: use default values for table_height and viewpoint
-    default_table_height = 2.0
+    # Expand to full factor space: use given values for table_height and viewpoint
     if VIEWPOINT_REPRESENTATION == "index":
-        default_viewpoint = 0.0
         grid_tensor = torch.cat(
             [
                 grid_2d,
-                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
-                torch.full((grid_2d.shape[0], 1), default_viewpoint, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), camera_viewpoint, **tkwargs),
             ],
             dim=1,
         )
@@ -343,7 +342,7 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
         grid_tensor = torch.cat(
             [
                 grid_2d,
-                torch.full((grid_2d.shape[0], 1), default_table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), table_height, **tkwargs),
                 torch.full((grid_2d.shape[0], 1), cam_az, **tkwargs),
                 torch.full((grid_2d.shape[0], 1), cam_el, **tkwargs),
                 torch.full((grid_2d.shape[0], 1), cam_dist, **tkwargs),
@@ -486,6 +485,256 @@ def animate_active_learning(df, output_file, grid_resolution, model_name, acq_fu
         print("Ensure ffmpeg is installed and accessible in your system's PATH.")
 
     plt.close(fig)
+
+
+def plot_comparison_xy(
+    results_list, gt_df, output_file, 
+    grid_resolution, model_name, table_height, camera_viewpoint, plot_mode
+):
+    """
+    Generates a plot comparing model errors or model means from one or more runs
+    (e.g., Active, IID) against a ground truth dataset.
+    Only shows factors x and y (2D projection).
+    
+    Args:
+        results_list: List of (label, df) tuples for model results to compare
+        gt_df: DataFrame with ground truth results
+        output_file: Output path for the plot
+        grid_resolution: Resolution for the 2D grid (x, y)
+        model_name: Model name to use
+        table_height: Table height value to use for visualization
+        camera_viewpoint: Viewpoint index to use for visualization
+        plot_mode: 'error' or 'mean'
+    """
+    print(f"Generating comparison plot (Mode: {plot_mode}, Model: {model_name}) -> {output_file}...")
+
+    # 1. Create 2D grid for visualization (x, y) and expand to full factor space
+    x_grid = torch.linspace(BOUNDS[0, 0].item(), BOUNDS[1, 0].item(), grid_resolution, **tkwargs)
+    y_grid = torch.linspace(BOUNDS[0, 1].item(), BOUNDS[1, 1].item(), grid_resolution, **tkwargs)
+    xx, yy = torch.meshgrid(x_grid, y_grid, indexing='ij')
+    grid_2d = torch.stack([xx.flatten(), yy.flatten()], dim=1)
+    
+    # Expand to full factor space: use given values for table_height and viewpoint
+    if VIEWPOINT_REPRESENTATION == "index":
+        # Factors: [x, y, table_height, viewpoint_index]
+        grid_tensor = torch.cat(
+            [
+                grid_2d,
+                torch.full((grid_2d.shape[0], 1), table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), float(camera_viewpoint), **tkwargs),
+            ],
+            dim=1,
+        )
+    else:
+        # Factors: [x, y, table_height, camera_azimuth, camera_elevation, camera_distance]
+        vp = get_viewpoint_params(camera_viewpoint)
+        cam_az = float(vp["azimuth"])
+        cam_el = float(vp["elevation"])
+        cam_dist = float(vp["distance"])
+        grid_tensor = torch.cat(
+            [
+                grid_2d,
+                torch.full((grid_2d.shape[0], 1), table_height, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_az, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_el, **tkwargs),
+                torch.full((grid_2d.shape[0], 1), cam_dist, **tkwargs),
+            ],
+            dim=1,
+        )
+    grid_shape = (grid_resolution, grid_resolution)
+    
+    # Create validity mask
+    valid_mask_flat = np.array([is_valid_point(p) for p in grid_tensor])
+
+    # 2. Load Ground Truth data and aggregate by (x, y)
+    #    Since GT may have multiple table_height/viewpoint values per (x,y), we aggregate
+    print(f"  Mapping Ground Truth data (N={len(gt_df)})...")
+    if len(gt_df) < 1:
+         print("Error: Ground truth data is empty. Cannot generate comparison plot.")
+         return
+
+    # Create a lookup: (x, y) -> list of outcomes (for aggregation)
+    gt_lookup = {}
+    for _, row in gt_df.iterrows():
+        x, y = row['x'], row['y']
+        outcome = row['continuous_outcome']
+        # Round to match grid precision
+        x_rounded = round(float(x), 6)
+        y_rounded = round(float(y), 6)
+        key = (x_rounded, y_rounded)
+        if key not in gt_lookup:
+            gt_lookup[key] = []
+        gt_lookup[key].append(outcome)
+    
+    # Create a nan-filled flat array for the GT map
+    mean_gt_flat = np.full(grid_tensor.shape[0], np.nan)
+    
+    # Map GT outcomes to grid (aggregate multiple outcomes per (x,y) by taking mean)
+    points_mapped = 0
+    for i, p in enumerate(grid_tensor):
+        x_val = round(p[0].item(), 6)
+        y_val = round(p[1].item(), 6)
+        key = (x_val, y_val)
+        if key in gt_lookup:
+            # Aggregate multiple outcomes (if any) by taking mean
+            mean_gt_flat[i] = np.mean(gt_lookup[key])
+            points_mapped += 1
+    
+    print(f"    Successfully mapped {points_mapped} GT grid points (from {len(gt_df)} GT data points).")
+    if points_mapped == 0:
+        print("Error: No GT points matched the grid. Check --grid_resolution.")
+        return
+
+    # Reshape the flat array to the 2D grid
+    mean_gt = mean_gt_flat.reshape(grid_shape)
+
+
+    # 3. Fit each model and calculate error/stats
+    model_data_list = []
+    for label, df in results_list:
+        X_model, Y_model = _get_tensors_from_df(df)
+        if len(X_model) < 1:
+            print(f"  Skipping {label} model (N=0).")
+            continue
+        print(f"  Fitting {label} {model_name} model (N={len(X_model)})...")
+        model = fit_surrogate_model(X_model, Y_model, BOUNDS, model_name=model_name)
+
+        with torch.no_grad():
+            # Move grid_tensor to model's device
+            device = next(model.parameters()).device
+            grid_tensor_device = grid_tensor.to(device)
+            
+            # --- Apply mask to model mean ---
+            posterior = model.posterior(grid_tensor_device)
+            mean_tensor_model = posterior.mean.squeeze(-1)
+            if mean_tensor_model.ndim == 2:
+                mean_tensor_model = mean_tensor_model.mean(dim=0)
+                
+            mean_model_flat = mean_tensor_model.cpu().numpy()
+            # We use the valid_mask_flat here to mask out the model's predictions
+            # in the same invalid regions as the GT.
+            mean_model_flat[~valid_mask_flat] = np.nan
+            mean_model = mean_model_flat.reshape(grid_shape)
+
+        # Calculate error metrics regardless of plot_mode
+        # This works because both mean_model and mean_gt have NaNs
+        # in the same invalid locations.
+        error_map = np.abs(mean_model - mean_gt)
+        mae = np.nanmean(error_map) # MAE only over valid areas
+        print(f"    Valid Area MAE ({label}): {mae:.4f}")
+        
+        # Store the data
+        stats_dict = {
+            'label': label,
+            'n': len(X_model),
+            'mean_map': mean_model,
+            'error_map': error_map,
+            'mae': mae
+        }
+        
+        model_data_list.append(stats_dict)
+
+    # 3. Plotting (This block is unchanged)
+    num_models = len(model_data_list)
+    num_plots = num_models + 1 # +1 for GT
+
+    fig, axes = plt.subplots(1, num_plots, figsize=(9 * num_plots, 9))
+    if num_plots == 0:
+        print("Error: No models provided or fit successfully for comparison.")
+        return
+    elif num_plots == 1:
+        axes = [axes] # Make it iterable
+    else:
+        axes = axes.flatten()
+
+    # Calculate extent (same as before)
+    x_min, y_min = BOUNDS[0, 0].item(), BOUNDS[0, 1].item()
+    x_max, y_max = BOUNDS[1, 0].item(), BOUNDS[1, 1].item()
+    
+    if grid_resolution > 1:
+        x_step = (x_max - x_min) / (grid_resolution - 1)
+        y_step = (y_max - y_min) / (grid_resolution - 1)
+        half_x_step, half_y_step = x_step / 2.0, y_step / 2.0
+        plot_extent = [
+            x_min - half_x_step, x_max + half_x_step,
+            y_min - half_y_step, y_max + half_y_step
+        ]
+    else:
+        plot_extent = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
+
+    # Determine a common error scale (only if needed)
+    vmax_error = 1.0
+    if plot_mode == 'error':
+        if model_data_list:
+            valid_maxes = [
+                np.nanmax(stats['error_map']) for stats in model_data_list 
+                if 'error_map' in stats and not np.all(np.isnan(stats['error_map']))
+            ]
+            if valid_maxes:
+                vmax_error = max(valid_maxes)
+            if vmax_error == 0 or not valid_maxes: 
+                vmax_error = 1.0
+
+    # Define the colormaps
+    cmap_gt = plt.cm.viridis_r.copy()
+    cmap_gt.set_bad(color='gray')
+    cmap_err = plt.cm.hot.copy()
+    cmap_err.set_bad(color='gray')
+
+    # --- Plot 1...N: Model Plots (Error or Mean) ---
+    for i, stats in enumerate(model_data_list):
+        ax = axes[i]
+        
+        if plot_mode == 'error':
+            im = ax.imshow(
+                stats['error_map'], origin='lower', extent=plot_extent, 
+                cmap=cmap_err, vmin=0, vmax=vmax_error, aspect='equal'
+            )
+            fig.colorbar(im, ax=ax, label='Absolute Error')
+            ax.set_title(
+                f"{stats['label']} Model Error (N={stats['n']})\n"
+                f"Valid Area MAE = {stats['mae']:.4f}"
+            )
+        
+        elif plot_mode == 'mean':
+            im = ax.imshow(
+                stats['mean_map'], origin='lower', extent=plot_extent, 
+                cmap=cmap_gt, vmin=0, vmax=4, aspect='equal' # Use GT cmap and scale
+            )
+            fig.colorbar(im, ax=ax, label='Predicted Outcome (Mean)')
+            ax.set_title(
+                f"{stats['label']} Model Mean (N={stats['n']})\n"
+                f"Valid Area MAE = {stats['mae']:.4f}"
+            )
+            
+        # Common axis setup
+        ax.set_xlabel('X Position')
+        if i == 0:
+            ax.set_ylabel('Y Position')
+        ax.set_xlim(plot_extent[0], plot_extent[1])
+        ax.set_ylim(plot_extent[2], plot_extent[3])
+
+
+    # --- Plot N+1: Ground Truth Model ---
+    ax_gt = axes[num_models]
+    im_gt = ax_gt.imshow(
+        mean_gt, origin='lower', extent=plot_extent, 
+        cmap=cmap_gt, vmin=0, vmax=4, aspect='equal'
+    )
+    fig.colorbar(im_gt, ax=ax_gt, label='Actual Outcome (Mean)')
+    ax_gt.set_title(f'Ground Truth Data (N={points_mapped})') # Use points_mapped
+    ax_gt.set_xlabel('X Position')
+    if num_models == 0:
+        ax_gt.set_ylabel('Y Position')
+    ax_gt.set_xlim(plot_extent[0], plot_extent[1])
+    ax_gt.set_ylim(plot_extent[2], plot_extent[3])
+
+    plt.suptitle(f'Model Comparison vs. Ground Truth (N={points_mapped})', fontsize=16, y=0.96)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.93])
+
+    plt.savefig(output_file, bbox_inches='tight')
+    plt.close()
+    print(f"Saved figure to {output_file}.")
 
 
 def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_file=None, model_name=None, task_name=None, 
@@ -852,14 +1101,14 @@ def main():
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest='command', required=True, help='Visualization command to run')
 
-    # --- Command: plot-points ---
-    parser_points = subparsers.add_parser('plot-points', help='Plot tested points colored by outcome')
+    # --- Command: plot-points-xy ---
+    parser_points = subparsers.add_parser('plot-points-xy', help='Plot tested points colored by outcome')
     parser_points.add_argument('--results_file', type=str, required=True, help='Path to the evaluation_results.csv file')
     parser_points.add_argument('--output_file', type=str, default='visualizations/robo_eval/tested_points.png', help='Output file path for the plot')
     parser_points.add_argument('--task', type=str, default=None, help='Task name for configuration')
 
-    # --- Command: plot-active ---
-    parser_active = subparsers.add_parser('plot-active', help='Plot active learning diagnostics (model mean, acqf)')
+    # --- Command: plot-active-xy ---
+    parser_active = subparsers.add_parser('plot-active-xy', help='Plot active learning diagnostics (model mean, acqf)')
     parser_active.add_argument(
         "--grid_resolution", type=int, default=10, help="The resolution (N) for the N_x_N grid."
     )
@@ -872,9 +1121,18 @@ def main():
     parser_active.add_argument(
         '--acq_func_name', type=str, default='PSD', help='Name of acq func (e.g. PSD, qNIPV, qBALD)'
     )
+    parser_active.add_argument(
+        '--table_height', type=float,
+        help='Table height value to use for visualization'
+    )
+    parser_active.add_argument(
+        '--camera_viewpoint', type=int,
+        help='Camera viewpoint index to use for visualization'
+    )
+    parser_active.add_argument('--task', type=str, default=None, help='Task name for configuration')
 
-    # --- Command: animate-active ---
-    parser_animate = subparsers.add_parser('animate-active', help='Animate active learning diagnostics over trials')
+    # --- Command: animate-active-xy ---
+    parser_animate = subparsers.add_parser('animate-active-xy', help='Animate active learning diagnostics over trials')
     parser_animate.add_argument(
         "--grid_resolution", type=int, default=10, help="The resolution (N) for the N_x_N grid."
     )
@@ -888,9 +1146,17 @@ def main():
     parser_animate.add_argument(
         '--acq_func_name', type=str, default='PSD', help='Name of acq func (e.g. PSD, qNIPV, qBALD)'
     )
+    parser_animate.add_argument(
+        '--table_height', type=float,
+        help='Table height value to use for visualization'
+    )
+    parser_animate.add_argument(
+        '--camera_viewpoint', type=int,
+        help='Camera viewpoint index to use for visualization'
+    )
 
-    # --- Command: plot-comparison ---
-    parser_compare = subparsers.add_parser('plot-comparison', help='Compare model error against ground truth')
+    # --- Command: plot-comparison-xy ---
+    parser_compare = subparsers.add_parser('plot-comparison-xy', help='Compare model error against ground truth')
     parser_compare.add_argument(
         "--grid_resolution", type=int, default=10, help="The resolution (N) for the N_x_N grid."
     )
@@ -907,6 +1173,14 @@ def main():
     parser_compare.add_argument(
         '--model_name', type=str, default='SingleTaskGP', 
         help='Name of surrogate model (e.g. SingleTaskGP, SaasFullyBayesianSingleTaskGP)'
+    )
+    parser_compare.add_argument(
+        '--table_height', type=float,
+        help='Table height value to use for visualization'
+    )
+    parser_compare.add_argument(
+        '--camera_viewpoint', type=int,
+        help='Camera viewpoint index to use for visualization'
     )
     parser_compare.add_argument(
         '--plot_mode', type=str, choices=['error', 'mean'], default='mean',
@@ -941,20 +1215,21 @@ def main():
         print(f"Created output directory: '{output_dir}'")
 
     # --- Execute the chosen command ---
-    if args.command == 'plot-points':
+    if args.command == 'plot-points-xy':
         df = _load_data(args.results_file)
-        plot_tested_points(df, args.output_file, task_name=getattr(args, 'task', None))
+        plot_tested_points_xy(df, args.output_file, task_name=args.task)
 
-    elif args.command == 'plot-active':
+    elif args.command == 'plot-active-xy':
         df = _load_data(args.results_file)
-        plot_active_learning(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name, 
-                            results_file=args.results_file, task_name=getattr(args, 'task', None))
+        plot_active_learning_xy(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name, 
+                            args.table_height, args.camera_viewpoint, results_file=args.results_file, task_name=args.task)
 
-    elif args.command == 'animate-active':
+    elif args.command == 'animate-active-xy':
         df = _load_data(args.results_file)
-        animate_active_learning(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name, args.interval)
+        animate_active_learning_xy(df, args.output_file, args.grid_resolution, args.model_name, args.acq_func_name, 
+                            args.table_height, args.camera_viewpoint, args.interval)
 
-    elif args.command == 'plot-comparison':
+    elif args.command == 'plot-comparison-xy':
         gt_df = _load_data(args.gt_results_file)
         results_list = []
         if not args.add_results_file:
@@ -963,7 +1238,8 @@ def main():
             for label, filepath in args.add_results_file:
                 df = _load_data(filepath)
                 results_list.append((label, df))
-        plot_comparison(results_list, gt_df, args.output_file, args.grid_resolution, args.model_name, args.plot_mode)
+        plot_comparison_xy(results_list, gt_df, args.output_file, args.grid_resolution, args.model_name,
+                       args.table_height, args.camera_viewpoint, args.plot_mode)
 
     elif args.command == 'plot-metrics-vs-trials':
         gt_df = _load_data(args.gt_results_file)
