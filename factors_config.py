@@ -212,7 +212,7 @@ TASK_CONFIGS = {
         'increment': 0.5,
         'descriptions': {
             0.0: 'failed completely',
-            1.0: 'moved to block',
+            1.0: 'moved to block (within 5cm)',
             2.0: 'grasped block (success)',
         }
     },
@@ -220,17 +220,19 @@ TASK_CONFIGS = {
         'increment': 0.5,
         'descriptions': {
             0.0: 'failed completely',
-            1.0: 'moved toward the cup',
+            0.5: 'moved toward the cup (within 10cm)',
+            1.0: 'moved to the cup (within 5cm)',
+            1.5: 'tried to grab the cup (touched it)',
             2.0: 'grabbed the cup',
-            3.0: 'dropped the cup on its bottom rim',
-            4.0: 'set the cup upright without falling (success)'
+            2.5: 'dropped the cup vertically (>=45 degrees) onto its bottom rim',
+            3.0: 'set the cup upright without falling (success)'
         }
     },
     'putgreeninpot': {
         'increment': 0.5,
         'descriptions': {
             0.0: 'failed completely',
-            1.0: 'moved toward the correct object(s) (lid or block) in the right order',
+            1.0: 'moved to the correct object(s) (lid or block) in the right order (within 5cm)',
             2.0: 'grabbed the object(s) in the right order',
             3.0: 'moved object(s) toward their appropriate locations in the right order (e.g. moved block towards open pot, moved lid on pot to the table)',
             4.0: 'placed the object(s) at their appropriate locations in the right order (success)'
