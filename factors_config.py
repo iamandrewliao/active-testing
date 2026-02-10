@@ -5,6 +5,7 @@ This file centralizes all factor definitions, bounds, valid values, and task con
 Import this module in other files to access factor configurations.
 """
 import torch
+import numpy as np
 
 # Set up torch dtype (use CPU by default to avoid CUDA OOM at import time)
 # Tensors can be moved to GPU explicitly where needed.
@@ -275,6 +276,74 @@ def get_outcome_descriptions(task_name=None):
     return config['descriptions']
 
 # ============================================================================
+# Task-specific constraints (put the green block in the pot)
+# ============================================================================
+# Must match data_collection/factors_utils.py second gen_factors() for this task.
+# Pot is fixed; block (x,y) must be at least MIN_DIST_BLOCK_LIDPOT from pot.
+# When lid is not on pot, lid must be at least MIN_DIST_LID_POT from pot
+# (lid is not in our design space, so we only enforce block–pot distance here).
+POT_POSITION = (0.5, 0.5)
+MIN_DIST_BLOCK_LIDPOT = 0.15
+MIN_DIST_LID_POT = 0.2
+
+def sample_lid_for_putgreeninpot(block_x, block_y, table_height):
+    """
+    Sample a valid lid configuration for the task 'put the green block in the pot',
+    given the block position (and table height for reachability). Matches the logic
+    of data_collection/factors_utils.py second gen_factors().
+
+    - 50-50 chance lid on pot vs off.
+    - If lid on: lid position is (0.5, 0.5).
+    - If lid off: match data_collection gen_factors: np.linspace(0, 1, num=6)
+      Must satisfy constraints:
+      - block–lid distance > MIN_DIST_BLOCK_LIDPOT,
+      - lid–pot distance > MIN_DIST_LID_POT,
+      - lid reachable at table_height.
+
+    Returns:
+        tuple: (lid_x, lid_y, lid_on).
+    """
+    pot_x, pot_y = POT_POSITION
+    lid_grid = np.linspace(0.0, 1.0, num=6)
+
+    # 50-50 lid on or off
+    lid_on = np.random.choice([True, False])
+    if lid_on:
+        return (pot_x, pot_y, True)
+
+    # Lid off: sample until valid (same constraints as gen_factors)
+    for _ in range(500):  # avoid infinite loop if no valid position
+        lid_x = float(np.random.choice(lid_grid))
+        lid_y = float(np.random.choice(lid_grid))
+        dist_block_lid = np.sqrt((block_x - lid_x) ** 2 + (block_y - lid_y) ** 2)
+        dist_lid_pot = np.sqrt((lid_x - pot_x) ** 2 + (lid_y - pot_y) ** 2)
+        if dist_block_lid <= MIN_DIST_BLOCK_LIDPOT:
+            continue
+        if dist_lid_pot <= MIN_DIST_LID_POT:
+            continue
+        if not _is_reachable(lid_x, lid_y, table_height):
+            continue
+        return (lid_x, lid_y, False)
+
+    # Fallback: put lid on pot if no valid lid-off position found
+    return (pot_x, pot_y, True)
+
+
+def _satisfies_task_constraints(x, y, task_name):
+    """
+    Returns True if (x, y) satisfies task-specific constraints for the given task.
+    For 'putgreeninpot': block must be at least MIN_DIST_BLOCK_LIDPOT from the pot.
+    For other tasks: no extra constraint (returns True).
+    """
+    if task_name == "putgreeninpot":
+        # Block must be away from pot (0.5, 0.5)
+        dist_sq = (x - POT_POSITION[0]) ** 2 + (y - POT_POSITION[1]) ** 2
+        return dist_sq > (MIN_DIST_BLOCK_LIDPOT ** 2)
+    else:
+        return True
+
+
+# ============================================================================
 # Reachability (must match data_collection/factors_utils.py)
 # ============================================================================
 # Dictionary defining the reachability line for each table height (how far the
@@ -304,15 +373,18 @@ def _is_reachable(x, y, table_height):
 # Validation
 # ============================================================================
 
-def is_valid_point(point):
+def is_valid_point(point, task_name=None):
     """
     Validates a point in the robot policy evaluation factor space, including
-    reachability.
+    reachability and task-specific constraints (e.g. for 'putgreeninpot').
 
     Representation depends on VIEWPOINT_REPRESENTATION:
     - \"index\":  [x, y, table_height, viewpoint] with viewpoint in {0,1,2}
     - \"params\": [x, y, table_height, camera_azimuth, camera_elevation, camera_distance]
                  where the last 3 entries equal one of the 3 CAMERA_VIEWPOINTS parameter triples.
+
+    If task_name is provided (e.g. 'putgreeninpot'), task-specific constraints
+    are also enforced (e.g. block must be at least MIN_DIST_BLOCK_LIDPOT from pot).
     """
     if point.shape[0] != DIMS:
         return False
@@ -334,6 +406,10 @@ def is_valid_point(point):
 
     # Reachability: same as data collection (factors_utils.is_valid_point)
     if not _is_reachable(x, y, table_height):
+        return False
+
+    # Task-specific constraints (e.g. putgreeninpot: block away from pot)
+    if not _satisfies_task_constraints(x, y, task_name):
         return False
 
     if VIEWPOINT_REPRESENTATION == "index":

@@ -9,9 +9,10 @@ from testers import ActiveTester, IIDSampler, ListIteratorSampler
 from utils import run_evaluation, parse_args, fit_surrogate_model
 from factors_config import (
     BOUNDS, DIMS, tkwargs,
-    get_design_points_robot, is_valid_point,
+    get_design_points_robot, is_valid_point, sample_lid_for_putgreeninpot,
     FACTOR_COLUMNS, get_task_config, get_outcome_range, get_success_outcome, get_outcome_descriptions
 )
+import numpy as np
 import os  # Added for checking file existence
 import uuid
 from datetime import datetime
@@ -78,11 +79,12 @@ def main(args):
         all_points = get_design_points_robot()
         
         # 2. Filter design space to get the valid "brute-force" pool of points
-        valid_points_list = [p for p in all_points if is_valid_point(p)]
+        # (includes reachability and task-specific constraints, e.g. putgreeninpot)
+        valid_points_list = [p for p in all_points if is_valid_point(p, task_name=args.task)]
         
         if not valid_points_list:
             print(f"Error: No valid points found in the design space.")
-            print("Check your 'is_valid_point' function.")
+            print("Check your 'is_valid_point' function and task-specific constraints.")
             exit()
             
         points = torch.stack(valid_points_list)
@@ -223,7 +225,7 @@ def main(args):
         point = sampler.get_next_point()
         
         # --- Robust validity check ---
-        while not is_valid_point(point):
+        while not is_valid_point(point, task_name=args.task):
             print(f"Point {point.tolist()} is not valid -> handling...")
             if args.mode in ['loaded', 'brute_force']:
                 print(f"Error: The loaded point from trial {i+1} is invalid. Please check your source file.")
@@ -239,7 +241,18 @@ def main(args):
                 print("Resampling...")
                 point = sampler.get_next_point()
 
-        binary_outcome, continuous_outcome, steps_taken = run_evaluation(point, args.max_steps, args.task)
+        # Task-specific extra factors (e.g. putgreeninpot: random lid position satisfying constraints)
+        extra_factors = None
+        if args.task == "putgreeninpot":
+            block_x = point[0].item()
+            block_y = point[1].item()
+            table_height = point[2].item()
+            lid_x, lid_y, lid_on = sample_lid_for_putgreeninpot(block_x, block_y, table_height)
+            extra_factors = {"lid_x": lid_x, "lid_y": lid_y, "lid_on": lid_on}
+
+        binary_outcome, continuous_outcome, steps_taken = run_evaluation(
+            point, args.max_steps, args.task, extra_factors=extra_factors
+        )
         
         # Use continuous_outcome for the surrogate model, matching initial data collection
         new_y_tensor = torch.tensor([continuous_outcome], **tkwargs)
@@ -309,6 +322,10 @@ def main(args):
         # Save all factors using named columns from config
         for idx, col_name in enumerate(FACTOR_COLUMNS):
             entry[col_name] = point[idx].item()
+        # Save task-specific extra factors (e.g. putgreeninpot: lid position; not part of design space)
+        if extra_factors:
+            for key, val in extra_factors.items():
+                entry[key] = val
         results_data.append(entry)
 
         # Save current results

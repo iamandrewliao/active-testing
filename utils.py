@@ -266,15 +266,17 @@ def get_design_points_test(resolution, bounds, tkwargs):
 
 
 
-def run_evaluation(point, max_steps, task_name=None):
+def run_evaluation(point, max_steps, task_name=None, extra_factors=None):
     """
     Simulates a robot evaluation trial for a given point (a combination of factor values).
     Prompts the user for the outcome.
-    
+
     Args:
         point: Factor values for the evaluation
         max_steps: Maximum number of steps allowed
         task_name: Name of the task (uses default if None)
+        extra_factors: Optional dict of task-specific non-design factors (e.g. for
+            putgreeninpot: {'lid_x', 'lid_y', 'lid_on'}). Printed so the evaluator can set up the scene.
     """
     from factors_config import (
         DIMS,
@@ -284,7 +286,7 @@ def run_evaluation(point, max_steps, task_name=None):
         get_success_outcome,
         get_outcome_descriptions,
     )
-    
+
     # Create a string representation of the point using factor names from config
     if point.shape[0] == DIMS and DIMS == len(FACTOR_COLUMNS):
         # factors used in this work; change if needed
@@ -294,7 +296,7 @@ def run_evaluation(point, max_steps, task_name=None):
 
         print("-" * 30)
         print(f"🤖 Running trial:")
-        print(f"   Object position: ({x:.1f}, {y:.1f})")
+        print(f"   Object position (block): ({x:.1f}, {y:.1f})")
         print(f"   Table height: {table_height:.0f} inches")
 
         if VIEWPOINT_REPRESENTATION == "index":
@@ -320,9 +322,20 @@ def run_evaluation(point, max_steps, task_name=None):
                     f"   Camera viewpoint: unknown "
                     f"(az={cam_az:.1f}, el={cam_el:.1f}, dist={cam_dist:.1f})"
                 )
+
+        # Task-specific extra factors (e.g. putgreeninpot: lid position for scene setup)
+        if extra_factors:
+            lid_x = extra_factors.get("lid_x")
+            lid_y = extra_factors.get("lid_y")
+            lid_on = extra_factors.get("lid_on")
+            if lid_x is not None and lid_y is not None and lid_on is not None:
+                if lid_on:
+                    print(f"   Lid position: on pot (0.5, 0.5)")
+                else:
+                    print(f"   Lid position: ({lid_x:.1f}, {lid_y:.1f})")
     else:
         raise ValueError(f"Point dimension {point.shape[0]} does not match expected DIMS={DIMS}")
-    
+
     # Get task-specific outcome configuration
     min_outcome, max_outcome, increment = get_outcome_range(task_name)
     success_outcome = get_success_outcome(task_name)
