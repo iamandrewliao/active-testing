@@ -213,8 +213,10 @@ TASK_CONFIGS = {
         'increment': 0.5,
         'descriptions': {
             0.0: 'failed completely',
-            1.0: 'moved to block (within 5cm)',
-            2.0: 'grasped block (success)',
+            0.5: 'moved toward the block (within 10cm)',
+            1.0: 'moved to the block (within 5cm)',
+            1.5: 'tried to grab the block (touched it)',
+            2.0: 'grasped block (success)'
         }
     },
     'uprightcup': {
@@ -233,10 +235,12 @@ TASK_CONFIGS = {
         'increment': 0.5,
         'descriptions': {
             0.0: 'failed completely',
-            1.0: 'moved to the correct object(s) (lid or block) in the right order (within 5cm)',
+            0.5: 'moved toward the correct object(s) (lid or block) in the right order (if involving more than one object) (within 10cm)',
+            1.0: 'moved to the correct object(s) in the right order (within 5cm)',
+            1.5: 'tried to grab at least one object (touched it)',
             2.0: 'grabbed the object(s) in the right order',
-            3.0: 'moved object(s) toward their appropriate locations in the right order (e.g. moved block towards open pot, moved lid on pot to the table)',
-            4.0: 'placed the object(s) at their appropriate locations in the right order (success)'
+            2.5: 'moved object(s) toward their appropriate locations in the right order (e.g. moved block towards open pot, moved lid on pot to the table)',
+            3.0: 'placed the object(s) at their appropriate locations in the right order (success)'
         }
     }
     # Add more task configurations here as needed
