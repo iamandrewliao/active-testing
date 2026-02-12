@@ -60,12 +60,8 @@ def main(args):
             args.output_file = os.path.join(eval_dir, output_filename)
         # If file exists, keep the original path (for resuming)
     
-    if args.save_points is None:
-        # Don't auto-create save_points, but if user wants it, put it in eval_dir
-        pass
-    elif not os.path.isabs(args.save_points) and not os.path.dirname(args.save_points):
-        # If just a filename, put it in eval_dir
-        args.save_points = os.path.join(eval_dir, args.save_points)
+    # Note: we no longer save a separate 'points' CSV, since all factor
+    # values are already included in the main results CSV.
     
     if args.mode == 'brute_force' and args.num_evals:
         print("Note: --num_evals is ignored in 'brute_force' mode; evaluating full design space instead.")
@@ -356,15 +352,6 @@ def main(args):
             print(f"💾 Final model saved to '{model_save_path}'.")
         except Exception as e:
             print(f"Warning: Could not save model: {e}")
-
-    # --- Save generated points if requested ---
-    if args.save_points:
-        final_df = pd.DataFrame(results_data)
-        # Save only the factor columns from config
-        points_df = final_df[FACTOR_COLUMNS]
-        points_df.to_csv(args.save_points, index=False)
-        print(f"💾 Evaluation points saved to '{args.save_points}'.")
-
 
 if __name__ == "__main__":
     args = parse_args()

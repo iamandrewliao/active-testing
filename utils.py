@@ -196,6 +196,12 @@ def calculate_log_likelihood(model, X_test, Y_test):
         while var.ndim > 1 and var.shape[-1] == 1:
             var = var.squeeze(-1)
         
+        # Clip variance to prevent numerical instability (very small variances lead to extreme log-likelihoods)
+        # Minimum variance threshold: 1e-6 (in original outcome space)
+        # This prevents log-probability from becoming extremely negative when variance is near zero
+        min_var = torch.tensor(1e-6, device=var.device, dtype=var.dtype)
+        var = torch.clamp(var, min=min_var)
+        
         # Handle Bayesian case
         if mean.ndim == 2:  # (S, N)
             # For each sample, compute log_prob and average

@@ -23,6 +23,7 @@ from factors_config import (
     VIEWPOINT_VALUES,
     get_viewpoint_name,
     get_viewpoint_params,
+    get_viewpoint_index_from_params,
     is_valid_point,
     VIEWPOINT_REPRESENTATION,
 )
@@ -750,7 +751,7 @@ def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_fil
         iid_dfs: List of DataFrames with IID testing results (or single DataFrame for backward compatibility)
         gt_df: DataFrame with ground truth test set
         output_file: Output path for the plot
-        model_name: Surrogate model name to use
+        model_name: Surrogate model name to use (if trained models aren't found)
         task_name: Task name for configuration
         active_results_files: List of paths to active results CSV files (used to find saved models)
         iid_results_files: List of paths to IID results CSV files (used to find saved models)
@@ -994,9 +995,27 @@ def create_rmse_summary_table(eval_df, gt_df, output_file, model_name, task_name
     import pickle
     
     # Prepare ground truth data - create a lookup dictionary
+    # Handle both "index" and "params" viewpoint representations
     gt_lookup = {}
     for _, row in gt_df.iterrows():
-        key = (round(row['x'], 1), round(row['y'], 1), round(row['table_height']), round(row['viewpoint']))
+        x_val = round(row['x'], 1)
+        y_val = round(row['y'], 1)
+        th_val = round(row['table_height'])
+        
+        if VIEWPOINT_REPRESENTATION == "index":
+            # Use viewpoint index directly
+            vp_val = round(row['viewpoint'])
+            key = (x_val, y_val, th_val, vp_val)
+        else:
+            # Convert camera params to viewpoint index for lookup
+            cam_az = row['camera_azimuth']
+            cam_el = row['camera_elevation']
+            cam_dist = row['camera_distance']
+            vp_idx = get_viewpoint_index_from_params(cam_az, cam_el, cam_dist)
+            if vp_idx is None:
+                continue  # Skip if viewpoint params don't match any known viewpoint
+            key = (x_val, y_val, th_val, vp_idx)
+        
         gt_lookup[key] = row['continuous_outcome']
     
     # Get all factor values
@@ -1048,12 +1067,26 @@ def create_rmse_summary_table(eval_df, gt_df, output_file, model_name, task_name
     # Move model to appropriate device
     device = next(model.parameters()).device
     
-    for viewpoint in viewpoints:
+    for viewpoint_idx in viewpoints:
         for table_height in table_heights:
             for x in x_vals:
                 for y in y_vals:
-                    # Always get model prediction for this factor combination
-                    test_point = torch.tensor([[x, y, table_height, viewpoint]], **tkwargs)
+                    # Construct test point based on viewpoint representation
+                    if VIEWPOINT_REPRESENTATION == "index":
+                        # Factors: [x, y, table_height, viewpoint_index]
+                        test_point = torch.tensor([[x, y, table_height, viewpoint_idx]], **tkwargs)
+                    else:
+                        # Factors: [x, y, table_height, camera_azimuth, camera_elevation, camera_distance]
+                        vp_params = get_viewpoint_params(int(viewpoint_idx))
+                        if vp_params is None:
+                            continue
+                        test_point = torch.tensor([[
+                            x, y, table_height,
+                            vp_params['azimuth'],
+                            vp_params['elevation'],
+                            vp_params['distance']
+                        ]], **tkwargs)
+                    
                     test_point = test_point.to(device)
                     with torch.no_grad():
                         posterior = model.posterior(test_point)
@@ -1067,7 +1100,7 @@ def create_rmse_summary_table(eval_df, gt_df, output_file, model_name, task_name
                     
                     # Initialize row data
                     row_data = {
-                        'camera_viewpoint': int(viewpoint),
+                        'camera_viewpoint': int(viewpoint_idx),
                         'table_height': int(table_height),
                         'x': x,
                         'y': y,
@@ -1075,7 +1108,7 @@ def create_rmse_summary_table(eval_df, gt_df, output_file, model_name, task_name
                     }
                     
                     # Calculate RMSE if ground truth is available
-                    key = (round(float(x), 1), round(float(y), 1), round(float(table_height)), round(float(viewpoint)))
+                    key = (round(float(x), 1), round(float(y), 1), round(float(table_height)), round(float(viewpoint_idx)))
                     if key in gt_lookup:
                         gt_value = gt_lookup[key]
                         # Calculate absolute error (RMSE for a single point is just absolute error)
