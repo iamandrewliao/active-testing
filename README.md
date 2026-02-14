@@ -20,6 +20,7 @@ I have included the following acquisition functions and surrogate models:
 - [./eval.py](./eval.py): Online evaluation script, run alongside robot policy deployment
 Example run commands:
 ```
+uv run eval.py --mode brute_force --task uprightcup --max_steps 35 --eval_id uprightcup_bruteforce
 # OLD
 uv run eval.py --mode brute_force --task pickblueblock --max_steps 35 --eval_id pickblueblock_bruteforce
 ```
