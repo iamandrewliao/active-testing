@@ -9,10 +9,9 @@ from testers import ActiveTester, IIDSampler, ListIteratorSampler
 from utils import run_evaluation, parse_args, fit_surrogate_model
 from factors_config import (
     BOUNDS, DIMS, tkwargs,
-    get_design_points_robot, is_valid_point, sample_lid_for_putgreeninpot,
+    get_design_points_robot, is_valid_point,
     FACTOR_COLUMNS, get_task_config, get_outcome_range, get_success_outcome, get_outcome_descriptions
 )
-import numpy as np
 import os  # Added for checking file existence
 import uuid
 from datetime import datetime
@@ -239,12 +238,12 @@ def main(args):
 
         # Task-specific extra factors (e.g. putgreeninpot: random lid position satisfying constraints)
         extra_factors = None
-        if args.task == "putgreeninpot":
-            block_x = point[0].item()
-            block_y = point[1].item()
-            table_height = point[2].item()
-            lid_x, lid_y, lid_on = sample_lid_for_putgreeninpot(block_x, block_y, table_height)
-            extra_factors = {"lid_x": lid_x, "lid_y": lid_y, "lid_on": lid_on}
+        # if args.task == "putgreeninpot":
+        #     block_x = point[0].item()
+        #     block_y = point[1].item()
+        #     table_height = point[2].item()
+        #     lid_x, lid_y, lid_on = sample_lid_for_putgreeninpot(block_x, block_y, table_height)
+        #     extra_factors = {"lid_x": lid_x, "lid_y": lid_y, "lid_on": lid_on}
 
         binary_outcome, continuous_outcome, steps_taken = run_evaluation(
             point, args.max_steps, args.task, extra_factors=extra_factors

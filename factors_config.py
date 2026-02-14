@@ -235,12 +235,16 @@ TASK_CONFIGS = {
         'increment': 0.5,
         'descriptions': {
             0.0: 'failed completely',
-            0.5: 'moved toward the correct object(s) (lid or block) in the right order (if involving more than one object) (within 10cm)',
-            1.0: 'moved to the correct object(s) in the right order (within 5cm)',
-            1.5: 'tried to grab at least one object (touched it)',
-            2.0: 'grabbed the object(s) in the right order',
-            2.5: 'moved object(s) toward their appropriate locations in the right order (e.g. moved block towards open pot, moved lid on pot to the table)',
-            3.0: 'placed the object(s) at their appropriate locations in the right order (success)'
+            0.5: 'moved toward the lid (within 10cm)',
+            1.0: 'moved to the lid (within 5cm)',
+            1.5: 'grabbed lid',
+            2.0: 'set lid down',
+            2.5: 'moved toward the block (within 10cm)',
+            3.0: 'moved to the block (within 5cm)',
+            3.5: 'grabbed block',
+            4.0: 'moved toward the pot (within 10cm)',
+            4.5: 'moved block to the pot (within 5cm)',
+            5.0: 'dropped the block in the pot (success)'
         }
     }
     # Add more task configurations here as needed
@@ -290,47 +294,47 @@ POT_POSITION = (0.5, 0.5)
 MIN_DIST_BLOCK_LIDPOT = 0.15
 MIN_DIST_LID_POT = 0.2
 
-def sample_lid_for_putgreeninpot(block_x, block_y, table_height):
-    """
-    Sample a valid lid configuration for the task 'put the green block in the pot',
-    given the block position (and table height for reachability). Matches the logic
-    of data_collection/factors_utils.py second gen_factors().
+# def sample_lid_for_putgreeninpot(block_x, block_y, table_height):
+#     """
+#     Sample a valid lid configuration for the task 'put the green block in the pot',
+#     given the block position (and table height for reachability). Matches the logic
+#     of data_collection/factors_utils.py second gen_factors().
 
-    - 50-50 chance lid on pot vs off.
-    - If lid on: lid position is (0.5, 0.5).
-    - If lid off: match data_collection gen_factors: np.linspace(0, 1, num=6)
-      Must satisfy constraints:
-      - block–lid distance > MIN_DIST_BLOCK_LIDPOT,
-      - lid–pot distance > MIN_DIST_LID_POT,
-      - lid reachable at table_height.
+#     - 50-50 chance lid on pot vs off.
+#     - If lid on: lid position is (0.5, 0.5).
+#     - If lid off: match data_collection gen_factors: np.linspace(0, 1, num=6)
+#       Must satisfy constraints:
+#       - block–lid distance > MIN_DIST_BLOCK_LIDPOT,
+#       - lid–pot distance > MIN_DIST_LID_POT,
+#       - lid reachable at table_height.
 
-    Returns:
-        tuple: (lid_x, lid_y, lid_on).
-    """
-    pot_x, pot_y = POT_POSITION
-    lid_grid = np.linspace(0.0, 1.0, num=6)
+#     Returns:
+#         tuple: (lid_x, lid_y, lid_on).
+#     """
+#     pot_x, pot_y = POT_POSITION
+#     lid_grid = np.linspace(0.0, 1.0, num=6)
 
-    # 50-50 lid on or off
-    lid_on = np.random.choice([True, False])
-    if lid_on:
-        return (pot_x, pot_y, True)
+#     # 50-50 lid on or off
+#     lid_on = np.random.choice([True, False])
+#     if lid_on:
+#         return (pot_x, pot_y, True)
 
-    # Lid off: sample until valid (same constraints as gen_factors)
-    for _ in range(500):  # avoid infinite loop if no valid position
-        lid_x = float(np.random.choice(lid_grid))
-        lid_y = float(np.random.choice(lid_grid))
-        dist_block_lid = np.sqrt((block_x - lid_x) ** 2 + (block_y - lid_y) ** 2)
-        dist_lid_pot = np.sqrt((lid_x - pot_x) ** 2 + (lid_y - pot_y) ** 2)
-        if dist_block_lid <= MIN_DIST_BLOCK_LIDPOT:
-            continue
-        if dist_lid_pot <= MIN_DIST_LID_POT:
-            continue
-        if not _is_reachable(lid_x, lid_y, table_height):
-            continue
-        return (lid_x, lid_y, False)
+#     # Lid off: sample until valid (same constraints as gen_factors)
+#     for _ in range(500):  # avoid infinite loop if no valid position
+#         lid_x = float(np.random.choice(lid_grid))
+#         lid_y = float(np.random.choice(lid_grid))
+#         dist_block_lid = np.sqrt((block_x - lid_x) ** 2 + (block_y - lid_y) ** 2)
+#         dist_lid_pot = np.sqrt((lid_x - pot_x) ** 2 + (lid_y - pot_y) ** 2)
+#         if dist_block_lid <= MIN_DIST_BLOCK_LIDPOT:
+#             continue
+#         if dist_lid_pot <= MIN_DIST_LID_POT:
+#             continue
+#         if not _is_reachable(lid_x, lid_y, table_height):
+#             continue
+#         return (lid_x, lid_y, False)
 
-    # Fallback: put lid on pot if no valid lid-off position found
-    return (pot_x, pot_y, True)
+#     # Fallback: put lid on pot if no valid lid-off position found
+#     return (pot_x, pot_y, True)
 
 
 def _satisfies_task_constraints(x, y, task_name):

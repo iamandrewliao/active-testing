@@ -336,9 +336,12 @@ def run_evaluation(point, max_steps, task_name=None, extra_factors=None):
             lid_on = extra_factors.get("lid_on")
             if lid_x is not None and lid_y is not None and lid_on is not None:
                 if lid_on:
-                    print(f"   Lid position: on pot (0.5, 0.5)")
+                    print(f"   Lid: on pot (0.5, 0.5)")
                 else:
                     print(f"   Lid position: ({lid_x:.1f}, {lid_y:.1f})")
+        elif task_name == "putgreeninpot":
+            # Lid is always on in current task setup
+            print(f"   Lid: on pot (0.5, 0.5)")
     else:
         raise ValueError(f"Point dimension {point.shape[0]} does not match expected DIMS={DIMS}")
 
