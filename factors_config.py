@@ -35,8 +35,8 @@ VIEWPOINT_VALUES = torch.tensor([0.0, 1.0, 2.0], **tkwargs)
 # These can be updated with actual values for your setup
 CAMERA_VIEWPOINTS = {
     0: {'name': 'back',  'azimuth': 90.0,  'elevation': 70.0, 'distance': 84.0},
-    1: {'name': 'right', 'azimuth': -30.0, 'elevation': 30.0, 'distance': 102.0},
-    2: {'name': 'left',  'azimuth': 210.0, 'elevation': 50.0, 'distance': 76.0},
+    1: {'name': 'backright',  'azimuth': 15.0, 'elevation': 30.0, 'distance': 103.0},
+    2: {'name': 'right', 'azimuth': -30.0, 'elevation': 30.0, 'distance': 102.0},
 }
 
 # How to represent camera viewpoint in the factor / model space:
