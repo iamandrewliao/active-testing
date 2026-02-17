@@ -118,8 +118,7 @@ def plot_active_learning_xy(df, output_file, grid_resolution, model_name, acq_fu
         if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
             model_path = os.path.join(results_dir, 'models', 'final_model.pkl')
         else:
-            # Fall back to old structure: same directory as CSV
-            model_path = results_file.replace('.csv', '_model.pkl')
+            raise ValueError(f"Could not find model in {results_dir}")
         
         if os.path.exists(model_path):
             try:
@@ -820,11 +819,9 @@ def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_fil
                         if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
                             model_path = os.path.join(results_dir, 'models', f'trial_{trial_num}_model.pkl')
                         else:
-                            # Fall back to old structure
-                            model_path = f"{results_file_base}_trial_{trial_num}_model.pkl"
+                            raise ValueError(f"Could not find model in {results_file_full}")
                     else:
-                        # Fall back to old structure
-                        model_path = f"{results_file_base}_trial_{trial_num}_model.pkl"
+                        raise ValueError(f"Could not find model in {results_file_full}")
                     
                     if os.path.exists(model_path):
                         try:
@@ -836,6 +833,7 @@ def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_fil
                 
                 # If model not loaded, fall back to retraining
                 if model is None:
+                    print(f"    Warning: Could not load model for run {run_idx+1}, trial {trial_num}")
                     current_df = df.iloc[:trial_num]
                     if len(current_df) < 1:
                         continue
@@ -1031,12 +1029,11 @@ def create_rmse_summary_table(eval_df, gt_df, output_file, model_name, task_name
         # If so, look for models in results/{eval_id}/models/
         results_dir = os.path.dirname(eval_results_file)
         
-        # Try new structure first: results/{eval_id}/models/final_model.pkl
+        # Try to find model at results/{eval_id}/models/final_model.pkl
         if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
             final_model_path = os.path.join(results_dir, 'models', 'final_model.pkl')
         else:
-            # Fall back to old structure: same directory as CSV
-            final_model_path = eval_results_file.replace('.csv', '_model.pkl')
+            raise ValueError(f"Could not find final model in {results_dir}")
         
         if os.path.exists(final_model_path):
             try:

@@ -37,6 +37,7 @@ from datetime import datetime
 
 import pandas as pd
 import torch
+from tqdm import tqdm
 
 from utils import parse_args, fit_surrogate_model
 from testers import ActiveTester, IIDSampler
@@ -143,7 +144,7 @@ def run_offline_iid(args, df_source, models_dir):
     train_X_list = []
     train_Y_list = []
 
-    for i in range(args.num_evals):
+    for i in tqdm(range(args.num_evals), desc="IID trials", unit="trial"):
         x_next = sampler.get_next_point()
         idx = _find_index_in_tensor_rows(X_all, x_next)
 
@@ -230,7 +231,7 @@ def run_offline_active(args, df_source, models_dir):
 
     # --- Log initial_random points ---
     results_data = []
-    for j, idx in enumerate(init_idx.tolist()):
+    for j, idx in enumerate(tqdm(init_idx.tolist(), desc="Initial random", unit="trial")):
         x0 = X_all[idx]
         entry = {
             "trial": len(results_data) + 1,
@@ -263,7 +264,7 @@ def run_offline_active(args, df_source, models_dir):
 
     # --- Active sampling loop ---
     num_active_trials = args.num_evals - args.num_init_pts
-    for k in range(num_active_trials):
+    for k in tqdm(range(num_active_trials), desc="Active trials", unit="trial"):
         x_next = active_tester.get_next_point()  # [D]
 
         # Find which row in `design_space` this corresponds to

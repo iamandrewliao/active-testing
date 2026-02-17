@@ -302,7 +302,7 @@ def run_evaluation(point, max_steps, task_name=None, extra_factors=None):
 
         print("-" * 30)
         print(f"🤖 Running trial:")
-        print(f"   Object position (block): ({x:.1f}, {y:.1f})")
+        print(f"   Object position: ({x:.1f}, {y:.1f})")
         print(f"   Table height: {table_height:.0f} inches")
 
         if VIEWPOINT_REPRESENTATION == "index":

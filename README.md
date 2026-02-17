@@ -21,8 +21,6 @@ I have included the following acquisition functions and surrogate models:
 Example run commands:
 ```
 uv run eval.py --mode brute_force --task uprightcup --max_steps 35 --eval_id uprightcup_bruteforce
-# OLD
-uv run eval.py --mode brute_force --task pickblueblock --max_steps 35 --eval_id pickblueblock_bruteforce
 ```
 - [./offline_eval.py](./offline_eval.py): Offline evaluation script, sampling from brute force/ground truth results
 Example run commands:
@@ -51,16 +49,15 @@ uv run offline_eval.py \
 
 Example run commands:
 ```
-# RMSE, log-likelihood comparison of active vs. IID vs. ground truth
+# RMSE, log-likelihood over trials (comparison of active vs. IID vs. ground truth)
 uv run viz.py plot-metrics-vs-trials \
   --gt_results_file results/uprightcup_bruteforce/results.csv \
   --active_results_file results/uprightcup_active_offline/results.csv \
   --iid_results_file results/uprightcup_iid_offline/results.csv \
-  --model_name SingleTaskGP \
   --task uprightcup \
   --output_file visualizations/robo_eval/uprightcup_offline_metrics_vs_trials.png
 
-# RMSE for all factor combinations
+# table of RMSE values for all factor combinations (for the surrogate model trained on either active or IID results)
 uv run viz.py create-rmse-table \
   --eval_results_file results/uprightcup_active_offline/results.csv \
   --gt_results_file results/uprightcup_bruteforce/results.csv \
