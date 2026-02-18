@@ -1,6 +1,5 @@
 '''BALD (Bayesian Active Learning by Disagreement) acquisition function for active testing.
 Implements the method from: https://arxiv.org/pdf/2502.09829 (EfficientEval paper)
-
 BALD: https://arxiv.org/pdf/1112.5745
 '''
 
