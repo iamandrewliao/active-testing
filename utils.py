@@ -328,20 +328,20 @@ def run_evaluation(point, max_steps, task_name=None, extra_factors=None):
                     f"   Camera viewpoint: unknown "
                     f"(az={cam_az:.1f}, el={cam_el:.1f}, dist={cam_dist:.1f})"
                 )
-
-        # Task-specific extra factors (e.g. putgreeninpot: lid position for scene setup)
-        if extra_factors:
-            lid_x = extra_factors.get("lid_x")
-            lid_y = extra_factors.get("lid_y")
-            lid_on = extra_factors.get("lid_on")
-            if lid_x is not None and lid_y is not None and lid_on is not None:
-                if lid_on:
-                    print(f"   Lid: on pot (0.5, 0.5)")
-                else:
-                    print(f"   Lid position: ({lid_x:.1f}, {lid_y:.1f})")
-        elif task_name == "putgreeninpot":
+        # elif task_name == "putgreeninpot":
             # Lid is always on in current task setup
-            print(f"   Lid: on pot (0.5, 0.5)")
+            # print(f"   Lid: on pot (0.5, 0.5)")
+            
+            # Task-specific extra factors (e.g. putgreeninpot: lid position for scene setup)
+            # if extra_factors:
+            #     lid_x = extra_factors.get("lid_x")
+            #     lid_y = extra_factors.get("lid_y")
+            #     lid_on = extra_factors.get("lid_on")
+            #     if lid_x is not None and lid_y is not None and lid_on is not None:
+            #         if lid_on:
+            #             print(f"   Lid: on pot (0.5, 0.5)")
+            #         else:
+            #             print(f"   Lid position: ({lid_x:.1f}, {lid_y:.1f})")
     else:
         raise ValueError(f"Point dimension {point.shape[0]} does not match expected DIMS={DIMS}")
 

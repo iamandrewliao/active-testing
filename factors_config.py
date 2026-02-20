@@ -24,8 +24,8 @@ OBJECT_POS_Y_VALUES = torch.tensor([i * 0.1 for i in range(11)], **tkwargs)
 # Table height: 1, 2, 3 inches
 TABLE_HEIGHT_VALUES = torch.tensor([1.0, 2.0, 3.0], **tkwargs)
 
-# Camera viewpoint indices: 0=back, 1=right, 2=left
-VIEWPOINT_VALUES = torch.tensor([0.0, 1.0, 2.0], **tkwargs)
+# Camera viewpoint indices: 0=back, 1=backright, 2=right
+VIEWPOINT_VALUES = torch.tensor([2.0, 1.0, 0.0], **tkwargs)
 
 # ============================================================================
 # Camera Viewpoint Definitions
@@ -152,12 +152,12 @@ def get_design_points_robot():
     In both cases, only the 3 discrete camera viewpoints in CAMERA_VIEWPOINTS are used,
     so the design space contains exactly 11 x 11 x 3 x 3 = 1089 combinations.
 
-    Iteration order (e.g. for brute_force): slowest to fastest =
-    camera viewpoint (back, right, left) -> table height (1,2,3) -> object x -> object y.
-    So for a fixed viewpoint and table height we sweep all (x,y) positions first.
+    Iteration order (e.g. for brute_force):
+    slowest to fastest = camera viewpoint -> table height -> object x, y.
+    i.e. for a fixed viewpoint and table height we sweep all (x,y) positions first.
     """
     # Meshgrid order (slowest to fastest) = viewpoint, table_height, x, y so that
-    # flatten() gives: for viewpoint in [back, right, left]: for h in [1,2,3]: for x: for y
+    # flatten() gives: for viewpoint in [back, backright, right]: for h in [1,2,3]: for x: for y
     v_grid, h_grid, x_grid, y_grid = torch.meshgrid(
         VIEWPOINT_VALUES,
         TABLE_HEIGHT_VALUES,
@@ -207,7 +207,6 @@ def get_design_points_robot():
 # ============================================================================
 
 # Define continuous outcome ranges and descriptions for different tasks
-# increment of 0.5 is used in case the outcome seems like it's in between two descriptions
 TASK_CONFIGS = {
     'pickblueblock': {
         'increment': 0.5,
@@ -237,14 +236,16 @@ TASK_CONFIGS = {
             0.0: 'failed completely',
             0.5: 'moved toward the lid (within 10cm)',
             1.0: 'moved to the lid (within 5cm)',
-            1.5: 'grabbed lid',
-            2.0: 'set lid down',
-            2.5: 'moved toward the block (within 10cm)',
-            3.0: 'moved to the block (within 5cm)',
-            3.5: 'grabbed block',
-            4.0: 'moved toward the pot (within 10cm)',
-            4.5: 'moved block to the pot (within 5cm)',
-            5.0: 'dropped the block in the pot (success)'
+            1.5: 'tried to grab the lid (touched it)',
+            2.0: 'grabbed lid',
+            2.5: 'dropped lid  outside of the pot',
+            3.0: 'moved toward the block (within 10cm)',
+            3.5: 'moved to the block (within 5cm)',
+            4.0: 'tried to grab the block (touched it)',
+            4.5: 'grabbed block',
+            5.0: 'moved toward the pot (within 10cm)',
+            5.5: 'moved block to the pot (within 5cm)',
+            6.0: 'dropped the block in the pot (success)'
         }
     }
     # Add more task configurations here as needed
@@ -356,10 +357,15 @@ def _satisfies_task_constraints(x, y, task_name):
 # ============================================================================
 # Dictionary defining the reachability line for each table height (how far the
 # robot arm can reach). Invalid condition: (y <= mx + c) and (x >= x_thresh).
+# REACHABILITY_BOUNDARIES = {
+#     1: {"m": 0.857, "c": -0.257, "x_thresh": 0.0},
+#     2: {"m": 0.867, "c": -0.2167, "x_thresh": 0.15},
+#     3: {"m": 0.85, "c": -0.17, "x_thresh": 0.2},
+# }
 REACHABILITY_BOUNDARIES = {
-    1: {"m": 0.857, "c": -0.257, "x_thresh": 0.0},
+    1: {"m": 0.85, "c": -0.17, "x_thresh": 0.2},
     2: {"m": 0.867, "c": -0.2167, "x_thresh": 0.15},
-    3: {"m": 0.85, "c": -0.17, "x_thresh": 0.2},
+    3: {"m": 0.857, "c": -0.257, "x_thresh": 0.0},
 }
 
 
