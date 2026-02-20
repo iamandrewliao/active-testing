@@ -302,7 +302,7 @@ def run_evaluation(point, max_steps, task_name=None, extra_factors=None):
 
         print("-" * 30)
         print(f"🤖 Running trial:")
-        print(f"   Object position: ({x:.1f}, {y:.1f})")
+        print(f"   Object position (block): ({x:.1f}, {y:.1f})")
         print(f"   Table height: {table_height:.0f} inches")
 
         if VIEWPOINT_REPRESENTATION == "index":
@@ -583,6 +583,11 @@ def parse_args():
         '--use_train_data_for_surrogate',
         action='store_true',
         help="If True, adds robot policy training points to the surrogate model training set."
+    )
+    parser.add_argument(
+        '--sample_without_replacement',
+        action='store_true',
+        help="If set, each point in the design pool is used at most once (this is for IID and active's initial random phase; active's active phase already samples without replacement (see ActiveTester))."
     )
 
     args = parser.parse_args()

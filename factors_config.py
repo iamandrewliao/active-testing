@@ -188,17 +188,17 @@ def get_design_points_robot():
             dim=1,
         )
 
-    total_points = (
-        len(OBJECT_POS_X_VALUES)
-        * len(OBJECT_POS_Y_VALUES)
-        * len(TABLE_HEIGHT_VALUES)
-        * len(VIEWPOINT_VALUES)
-    )
-    print(
-        f"Generated {all_points.shape[0]} total design points "
-        f"({len(OBJECT_POS_X_VALUES)}x{len(OBJECT_POS_Y_VALUES)}x"
-        f"{len(TABLE_HEIGHT_VALUES)}x{len(VIEWPOINT_VALUES)} = {total_points})."
-    )
+    # total_points = (
+    #     len(OBJECT_POS_X_VALUES)
+    #     * len(OBJECT_POS_Y_VALUES)
+    #     * len(TABLE_HEIGHT_VALUES)
+    #     * len(VIEWPOINT_VALUES)
+    # )
+    # print(
+    #     f"Generated {all_points.shape[0]} total design points "
+    #     f"({len(OBJECT_POS_X_VALUES)}x{len(OBJECT_POS_Y_VALUES)}x"
+    #     f"{len(TABLE_HEIGHT_VALUES)}x{len(VIEWPOINT_VALUES)} = {total_points})."
+    # )
 
     return all_points
 

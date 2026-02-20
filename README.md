@@ -17,12 +17,28 @@ I have included the following acquisition functions and surrogate models:
 - [./utils.py](./utils.py): Helper functions
     - Note: is_valid_point() is highly setup-dependent and will most likely need to be adjusted. 
 - [./factors_config.py](./factors_config.py): Factor configurations for your specific evaluation. Defines factors, tasks, task outcome ranges, etc. Make sure this is set up correctly before moving on to evaluation.
+If you want to set a custom order of factors for evaluation, change the following:
+```
+# change the order of factors in this code in get_design_points_robot()
+    v_grid, h_grid, x_grid, y_grid = torch.meshgrid(
+        VIEWPOINT_VALUES,
+        TABLE_HEIGHT_VALUES,
+        OBJECT_POS_X_VALUES,
+        OBJECT_POS_Y_VALUES,
+        indexing="ij",
+    )
+```
+If you want to set a custom order of values for an individual factor, change the following:
+```
+# example: viewpoint order 1 -> 2 -> 0
+VIEWPOINT_VALUES = torch.tensor([1.0, 2.0, 0.0], **tkwargs)
+```
 - [./eval.py](./eval.py): Online evaluation script, run alongside robot policy deployment
 Example run commands:
 ```
 uv run eval.py --mode brute_force --task uprightcup --max_steps 35 --eval_id uprightcup_bruteforce
 ```
-- [./offline_eval.py](./offline_eval.py): Offline evaluation script, sampling from brute force/ground truth results
+- [./offline_eval.py](./offline_eval.py): Offline evaluation script (active or IID sampling from brute force/ground truth results)
 Example run commands:
 ```
 # Active testing
@@ -35,6 +51,7 @@ uv run offline_eval.py \
   --acq_func_name PSD \
   --task uprightcup \
   --eval_id uprightcup_active_offline
+  --sample_without_replacement
 
 # IID testing
 uv run offline_eval.py \
@@ -44,7 +61,11 @@ uv run offline_eval.py \
   --model_name SingleTaskGP \
   --task uprightcup \
   --eval_id uprightcup_iid_offline
+  --sample_without_replacement
 ```
+
+**`--sample_without_replacement`** Use this flag in either eval.py or offline_eval.py to sample without replacement (each point in the design pool is used at most once) in IID testing or the initial random phase of active testing (the active phase already samples without replacement (see ActiveTester)).
+
 - [./viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
 
 Example run commands:

@@ -136,10 +136,17 @@ def run_offline_iid(args, df_source, models_dir):
     X_all, Y_cont, Y_bin, steps = _build_design_tensors(df_source)
     N = X_all.shape[0]
 
-    print(f"Offline IID sampling from {N} candidate points in '{args.load_path}'.")
+    wo = getattr(args, "sample_without_replacement", False)
+    if wo and args.num_evals > N:
+        raise ValueError(
+            f"With --sample_without_replacement, num_evals ({args.num_evals}) cannot exceed "
+            f"the source pool size ({N})."
+        )
+
+    print(f"Offline IID sampling from {N} candidate points in '{args.load_path}'" + (" (without replacement)." if wo else "."))
     print(f"Writing results to '{args.output_file}'.")
 
-    sampler = IIDSampler(X_all)
+    sampler = IIDSampler(X_all, without_replacement=wo)
     results_data = []
     train_X_list = []
     train_Y_list = []
@@ -318,30 +325,6 @@ def run_offline_active(args, df_source, models_dir):
     results_df = pd.DataFrame(results_data)
     results_df.to_csv(args.output_file, index=False)
     print("Offline ACTIVE sampling complete.")
-
-    # --- Save final model (like eval.py active final_model.pkl) ---
-    if hasattr(args, "model_name") and args.model_name is not None:
-        if hasattr(active_tester, "model") and active_tester.model is not None:
-            import pickle
-
-            model_save_path = os.path.join(models_dir, "final_model.pkl")
-            with open(model_save_path, "wb") as f:
-                pickle.dump(
-                    {
-                        "model": active_tester.model,
-                        "model_name": args.model_name,
-                        "acq_func_name": args.acq_func_name,
-                        "train_X": active_tester.train_X,
-                        "train_Y": active_tester.train_Y,
-                        "bounds": BOUNDS,
-                        "task_name": args.task,
-                        "training_data_factors_path": args.training_data_factors_path,
-                        "ood_metric": args.ood_metric,
-                        "use_train_data_for_surrogate": args.use_train_data_for_surrogate,
-                    },
-                    f,
-                )
-            print(f"💾 Final offline active model saved to '{model_save_path}'.")
 
 
 def main():

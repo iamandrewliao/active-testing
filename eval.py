@@ -78,7 +78,8 @@ def main(args):
             print(f"Setting num_evals to the full pool size: {pool_size} (brute force mode).")
             args.num_evals = pool_size
         elif args.mode in ['active', 'iid']:
-            print(f"{args.mode} mode: Running {args.num_evals} trials, sampling from the {pool_size}-point pool.")
+            wo = getattr(args, 'sample_without_replacement', False)
+            print(f"{args.mode} mode: Running {args.num_evals} trials, sampling from the {pool_size}-point pool." + (" (without replacement)" if wo else ""))
             if args.num_evals > pool_size:
                 print(f"Error: num_evals ({args.num_evals}) cannot be larger than the valid point pool size ({pool_size}).")
                 print("Decrease --num_evals (design space is fixed at 11x11x3x3 = 1089 points).")
@@ -128,7 +129,8 @@ def main(args):
             return
         print(f"⏯️  Running evaluation for {args.num_evals - loop_start_index} remaining points.")
     elif args.mode == 'iid':
-        sampler = IIDSampler(points)
+        sampler = IIDSampler(points, without_replacement=getattr(args, 'sample_without_replacement', False))
+
     elif args.mode == 'active':
         if loop_start_index >= args.num_init_pts:
             print(f"Resuming in 'active' mode with {loop_start_index} points.")
@@ -144,14 +146,14 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None, 
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None,
                                    model_name=args.model_name, acq_func_name=args.acq_func_name,
                                    training_data_factors_path=args.training_data_factors_path, ood_metric=args.ood_metric,
                                    use_train_data_for_surrogate=args.use_train_data_for_surrogate,
                                    task_name=args.task)
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
-            sampler = IIDSampler(points)
+            sampler = IIDSampler(points, without_replacement=getattr(args, 'sample_without_replacement', False))
 
     # --- Main Evaluation Loop ---
     print(f"\n--- Starting main evaluation loop ---")
@@ -177,7 +179,9 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None, 
+            # When sampling without replacement, active phase only suggests from points not yet used in initial_random
+            design_space = sampler.get_remaining_design_space() if getattr(args, 'sample_without_replacement', False) else points
+            sampler = ActiveTester(train_X, train_Y, BOUNDS, design_space, mc_points=None,
                                    model_name=args.model_name, acq_func_name=args.acq_func_name,
                                    training_data_factors_path=args.training_data_factors_path, ood_metric=args.ood_metric,
                                    use_train_data_for_surrogate=args.use_train_data_for_surrogate,
@@ -302,28 +306,6 @@ def main(args):
         print(f"Saved results for trial {i+1} to '{args.output_file}'")
 
     print("\nEvaluation complete.")
-
-    # --- Save final model if in active mode ---
-    if args.mode == 'active' and hasattr(sampler, 'model') and sampler.model is not None:
-        import pickle
-        model_save_path = os.path.join(models_dir, 'final_model.pkl')
-        try:
-            with open(model_save_path, 'wb') as f:
-                pickle.dump({
-                    'model': sampler.model,
-                    'model_name': args.model_name,
-                    'acq_func_name': args.acq_func_name,
-                    'train_X': sampler.train_X,
-                    'train_Y': sampler.train_Y,
-                    'bounds': BOUNDS,
-                    'task_name': args.task,
-                    'training_data_factors_path': args.training_data_factors_path,
-                    'ood_metric': args.ood_metric,
-                    'use_train_data_for_surrogate': args.use_train_data_for_surrogate,
-                }, f)
-            print(f"💾 Final model saved to '{model_save_path}'.")
-        except Exception as e:
-            print(f"Warning: Could not save model: {e}")
 
 if __name__ == "__main__":
     args = parse_args()

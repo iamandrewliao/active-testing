@@ -128,20 +128,44 @@ class ActiveTester:
 
 class IIDSampler:
     """
-    A sampler that samples *with replacement* from the full_design_space.
+    Sampler over full_design_space. By default samples *with replacement*.
+    If without_replacement=True, each point is used at most once; when exhausted, get_next_point() raises RuntimeError.
     """
-    def __init__(self, full_design_space):
+    def __init__(self, full_design_space, without_replacement=False):
         self.full_design_space = full_design_space
         self.num_points = self.full_design_space.shape[0]
+        self.without_replacement = without_replacement
+        if without_replacement:
+            self._perm = torch.randperm(self.num_points, device=full_design_space.device, dtype=torch.long)
+            self._idx = 0
         # print(f"Initialized IIDSampler with {self.num_points} discrete points.")
 
     def get_next_point(self):
-        """Generates a new point by sampling uniformly from the full design space."""
-        # Randomly select an index
+        """Generates a new point by sampling uniformly from the (remaining) design space."""
+        if self.without_replacement:
+            if self._idx >= self.num_points:
+                raise RuntimeError(
+                    "IIDSampler (without replacement): pool exhausted. "
+                    "Ensure num_evals <= design pool size when using --sample_without_replacement."
+                )
+            idx = self._perm[self._idx].item()
+            self._idx += 1
+            return self.full_design_space[idx]
+        # With replacement
         idx = torch.randint(low=0, high=self.num_points, size=(1,)).item()
-        point = self.full_design_space[idx]
-        return point
-    
+        return self.full_design_space[idx]
+
+    def get_remaining_design_space(self):
+        """
+        Returns the design space of points not yet drawn. Only valid when without_replacement=True.
+        Used when switching from initial_random to active so the active phase only suggests from the remaining pool.
+        """
+        if not self.without_replacement:
+            return self.full_design_space
+        if self._idx >= self.num_points:
+            return self.full_design_space[[]].reshape(0, self.full_design_space.shape[1])
+        return self.full_design_space[self._perm[self._idx :]]
+
     def update(self, new_x, new_y):
         """Does nothing."""
         pass

@@ -7,6 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import os
+import re
+from pathlib import Path
 
 # Import necessary BoTorch/GPyTorch components
 from botorch.utils.sampling import draw_sobol_samples
@@ -49,6 +51,25 @@ def _get_tensors_from_df(df):
     train_X = torch.tensor(df[FACTOR_COLUMNS].values, **tkwargs)
     train_Y = torch.tensor(df['continuous_outcome'].values, **tkwargs).unsqueeze(-1) # Shape [N, 1]
     return train_X, train_Y
+
+
+def _find_last_trial_model(models_dir):
+    models_path = Path(models_dir)
+    if not models_path.exists():
+        return None
+
+    # Use regex to safely find the number regardless of extra underscores
+    trial_files = []
+    for f in models_path.glob('trial_*_model.pkl'):
+        match = re.search(r'trial_(\+d)_model\.pkl', f.name)
+        if match:
+            trial_files.append((int(match.group(1)), str(f)))
+
+    if not trial_files:
+        return None
+
+    # Get the path from the tuple with the highest trial number
+    return max(trial_files, key=lambda x: x[0])[1]
 
 
 def plot_tested_points_xy(df, output_file, task_name=None):
@@ -112,11 +133,10 @@ def plot_active_learning_xy(df, output_file, grid_resolution, model_name, acq_fu
         # Check if results file is in new structure: results/{eval_id}/results.csv
         # If so, look for models in results/{eval_id}/models/
         results_dir = os.path.dirname(results_file)
-        results_basename = os.path.basename(results_file)
         
-        # Try new structure first: results/{eval_id}/models/final_model.pkl
-        if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
-            model_path = os.path.join(results_dir, 'models', 'final_model.pkl')
+        models_dir = os.path.join(results_dir, 'models')
+        if os.path.basename(results_dir) and os.path.exists(models_dir):
+            model_path = _find_last_trial_model(models_dir)
         else:
             raise ValueError(f"Could not find model in {results_dir}")
         
@@ -1029,21 +1049,21 @@ def create_rmse_summary_table(eval_df, gt_df, output_file, model_name, task_name
         # If so, look for models in results/{eval_id}/models/
         results_dir = os.path.dirname(eval_results_file)
         
-        # Try to find model at results/{eval_id}/models/final_model.pkl
-        if os.path.basename(results_dir) and os.path.exists(os.path.join(results_dir, 'models')):
-            final_model_path = os.path.join(results_dir, 'models', 'final_model.pkl')
+        models_dir = os.path.join(results_dir, 'models')
+        if os.path.basename(results_dir) and os.path.exists(models_dir):
+            model_path = _find_last_trial_model(models_dir)
         else:
-            raise ValueError(f"Could not find final model in {results_dir}")
+            raise ValueError(f"Could not find models directory in {results_dir}")
         
-        if os.path.exists(final_model_path):
+        if os.path.exists(model_path):
             try:
-                print(f"  Loading final saved model from '{final_model_path}'...")
-                with open(final_model_path, 'rb') as f:
+                print(f"  Loading saved model from '{model_path}'...")
+                with open(model_path, 'rb') as f:
                     model_data = pickle.load(f)
                     model = model_data['model']
-                    print(f"  Successfully loaded final model (trained on {model_data['train_X'].shape[0]} points).")
+                    print(f"  Successfully loaded model (trained on {model_data['train_X'].shape[0]} points).")
             except Exception as e:
-                print(f"  Warning: Could not load final model: {e}")
+                print(f"  Warning: Could not load model: {e}")
     
     # If model not loaded, fall back to retraining
     if model is None:
