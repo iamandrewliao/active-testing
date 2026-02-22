@@ -237,7 +237,7 @@ TASK_CONFIGS = {
             0.5: 'moved toward the lid (within 10cm)',
             1.0: 'moved to the lid (within 5cm)',
             1.5: 'tried to grab the lid (touched it)',
-            2.0: 'grabbed lid',
+            2.0: 'grabbed lid and lifted it',
             2.5: 'dropped lid outside of the pot',
             3.0: 'moved toward the block (within 10cm)',
             3.5: 'moved to the block (within 5cm)',
