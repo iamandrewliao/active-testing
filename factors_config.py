@@ -224,7 +224,7 @@ TASK_CONFIGS = {
             0.0: 'failed completely',
             0.5: 'moved toward the cup (within 10cm)',
             1.0: 'moved to the cup (within 5cm)',
-            1.5: 'tried to grab the cup (touched it)',
+            1.5: 'tried to grab the cup (touched the rim)',
             2.0: 'grabbed the cup',
             2.5: 'dropped the cup vertically (>=45 degrees) onto its bottom rim',
             3.0: 'set the cup upright without falling (success)'
@@ -236,7 +236,7 @@ TASK_CONFIGS = {
             0.0: 'failed completely',
             0.5: 'moved toward the lid (within 10cm)',
             1.0: 'moved to the lid (within 5cm)',
-            1.5: 'tried to grab the lid (touched it)',
+            1.5: 'tried to grab the lid (touched handle)',
             2.0: 'grabbed lid and lifted it',
             2.5: 'dropped lid outside of the pot',
             3.0: 'moved toward the block (within 10cm)',
