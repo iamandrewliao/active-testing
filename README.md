@@ -50,7 +50,7 @@ uv run offline_eval.py \
   --model_name SingleTaskGP \
   --acq_func_name PSD \
   --task uprightcup \
-  --eval_id uprightcup_active_offline
+  --eval_id uprightcup_active_offline \
   --sample_without_replacement
 
 # IID testing
@@ -73,10 +73,9 @@ Example run commands:
 # RMSE, log-likelihood over trials (comparison of active vs. IID vs. ground truth)
 uv run viz.py plot-metrics-vs-trials \
   --gt_results_file results/uprightcup_bruteforce/results.csv \
-  --active_results_file results/uprightcup_active_offline/results.csv \
-  --iid_results_file results/uprightcup_iid_offline/results.csv \
-  --task uprightcup \
-  --output_file visualizations/robo_eval/uprightcup_offline_metrics_vs_trials.png
+  --active_results_dir results/uprightcup_active_offline_SingleTaskGP_PSD \
+  --iid_results_dir results/uprightcup_iid_offline_SingleTaskGP \
+  --task uprightcup --output_file visualizations/robo_eval/plot.png
 
 # table of RMSE values for all factor combinations (for the surrogate model trained on either active or IID results)
 uv run viz.py create-rmse-table \

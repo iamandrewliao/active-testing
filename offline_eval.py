@@ -45,14 +45,19 @@ from factors_config import FACTOR_COLUMNS, BOUNDS, tkwargs
 
 
 def _ensure_eval_id_and_paths(args):
-    """Set up eval_id and results/{eval_id}/ output paths (similar to eval.py)."""
+    """Set up eval_id and results/{eval_id}/ (optionally run_{run_num}/) output paths."""
     # If eval_id not provided, auto-generate from timestamp
     if args.eval_id is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         args.eval_id = f"offline_{timestamp}_{uuid.uuid4().hex[:8]}"
 
     results_base_dir = "results"
-    eval_dir = os.path.join(results_base_dir, args.eval_id)
+    meta_dir = os.path.join(results_base_dir, args.eval_id)
+    run_num = getattr(args, "run_num", None)
+    if run_num is not None:
+        eval_dir = os.path.join(meta_dir, f"run_{run_num}")
+    else:
+        eval_dir = meta_dir
     models_dir = os.path.join(eval_dir, "models")
     os.makedirs(eval_dir, exist_ok=True)
     os.makedirs(models_dir, exist_ok=True)
@@ -220,7 +225,7 @@ def run_offline_active(args, df_source, models_dir):
     X_all, Y_cont, Y_bin, steps = _build_design_tensors(df_source)
     N = X_all.shape[0]
 
-    print(f"Offline ACTIVE sampling from {N} candidate points in '{args.load_path}'.")
+    print(f"Offline active sampling from {N} candidate points in '{args.load_path}'.")
     print(f"Total offline evals: {args.num_evals} "
           f"(initial_random={args.num_init_pts}, active={args.num_evals - args.num_init_pts}).")
     print(f"Writing results to '{args.output_file}'.")
@@ -324,7 +329,7 @@ def run_offline_active(args, df_source, models_dir):
 
     results_df = pd.DataFrame(results_data)
     results_df.to_csv(args.output_file, index=False)
-    print("Offline ACTIVE sampling complete.")
+    print("Offline active sampling complete.")
 
 
 def main():

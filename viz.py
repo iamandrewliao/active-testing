@@ -45,6 +45,38 @@ def _load_data(filepath):
         exit()
 
 
+def _discover_results_runs(path):
+    """
+    Discover one or more results runs from a path (meta-folder or single run).
+    - If path is a file: return [ (abs_results_csv_path,) ].
+    - If path is a dir: look for run_1/, run_2/, ... with results.csv; return sorted list of (abs_csv_path,).
+      If no run_* subdirs, check for results.csv at top level (single run).
+    Returns list of (results_csv_path,) for use as results_files (dirname gives run dir with models/).
+    """
+    path = os.path.abspath(path)
+    if os.path.isfile(path):
+        return [path] if path.lower().endswith(".csv") else []
+    if not os.path.isdir(path):
+        return []
+    # Look for run_N subdirs
+    run_dirs = []
+    for name in os.listdir(path):
+        if re.match(r"run_\d+", name):
+            sub = os.path.join(path, name)
+            if os.path.isdir(sub):
+                csv_path = os.path.join(sub, "results.csv")
+                if os.path.isfile(csv_path):
+                    run_dirs.append((int(name.split("_")[1]), csv_path))
+    run_dirs.sort(key=lambda x: x[0])
+    if run_dirs:
+        return [p for _, p in run_dirs]
+    # Single run at top level
+    top_csv = os.path.join(path, "results.csv")
+    if os.path.isfile(top_csv):
+        return [top_csv]
+    return []
+
+
 def _get_tensors_from_df(df):
     """Extracts and formats training tensors from a DataFrame."""
     # Use FACTOR_COLUMNS from config to handle 4D factors
@@ -851,9 +883,18 @@ def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_fil
                         except Exception as e:
                             print(f"    Warning: Could not load model for run {run_idx+1}, trial {trial_num}: {e}")
                 
+                # Expected no-model cases: active trials 1..num_init_pts (initial_random), IID trial 1 (need ≥2 points to fit)
+                def _expected_no_model():
+                    if run_type == "IID":
+                        return trial_num == 1
+                    if run_type == "active" and "mode" in df.columns:
+                        return df.iloc[trial_num - 1].get("mode") == "initial_random"
+                    return False
+
                 # If model not loaded, fall back to retraining
                 if model is None:
-                    print(f"    Warning: Could not load model for run {run_idx+1}, trial {trial_num}")
+                    if not _expected_no_model():
+                        print(f"    Warning: Could not load model for run {run_idx+1}, trial {trial_num}")
                     current_df = df.iloc[:trial_num]
                     if len(current_df) < 1:
                         continue
@@ -1239,10 +1280,8 @@ def main():
     
     # --- Command: plot-metrics-vs-trials ---
     parser_metrics = subparsers.add_parser('plot-metrics-vs-trials', help='Plot log-likelihood and RMSE vs trials for active and IID testing')
-    parser_metrics.add_argument('--active_results_file', type=str, default=None, help='Path to active testing results CSV (single run, for backward compatibility)')
-    parser_metrics.add_argument('--iid_results_file', type=str, default=None, help='Path to IID testing results CSV (single run, for backward compatibility)')
-    parser_metrics.add_argument('--add_active_results_file', action='append', help='Add an active testing results CSV file (can be used multiple times for multiple runs)')
-    parser_metrics.add_argument('--add_iid_results_file', action='append', help='Add an IID testing results CSV file (can be used multiple times for multiple runs)')
+    parser_metrics.add_argument('--active_results_dir', type=str, default=None, help='Path to active meta-folder (e.g. results/task_active_offline_Model_PSD). May contain run_1/, run_2/, ... or a single results.csv. Works with 1 or many runs.')
+    parser_metrics.add_argument('--iid_results_dir', type=str, default=None, help='Path to IID meta-folder (e.g. results/task_iid_offline_Model). Same layout as active_results_dir.')
     parser_metrics.add_argument('--gt_results_file', type=str, required=True, help='Path to ground truth test set CSV')
     parser_metrics.add_argument('--output_file', type=str, default='visualizations/robo_eval/metrics_vs_trials.png', help='Output file path')
     parser_metrics.add_argument('--model_name', type=str, default='SingleTaskGP', help='Surrogate model name')
@@ -1294,30 +1333,23 @@ def main():
     elif args.command == 'plot-metrics-vs-trials':
         gt_df = _load_data(args.gt_results_file)
         
-        # Collect active results files
+        # Discover runs from meta-folders (or single run)
         active_results_files = []
         active_dfs = []
-        if args.active_results_file:
-            active_results_files.append(args.active_results_file)
-            active_dfs.append(_load_data(args.active_results_file))
-        if args.add_active_results_file:
-            for filepath in args.add_active_results_file:
-                active_results_files.append(filepath)
+        if args.active_results_dir:
+            active_results_files = _discover_results_runs(args.active_results_dir)
+            for filepath in active_results_files:
                 active_dfs.append(_load_data(filepath))
         
-        # Collect IID results files
         iid_results_files = []
         iid_dfs = []
-        if args.iid_results_file:
-            iid_results_files.append(args.iid_results_file)
-            iid_dfs.append(_load_data(args.iid_results_file))
-        if args.add_iid_results_file:
-            for filepath in args.add_iid_results_file:
-                iid_results_files.append(filepath)
+        if args.iid_results_dir:
+            iid_results_files = _discover_results_runs(args.iid_results_dir)
+            for filepath in iid_results_files:
                 iid_dfs.append(_load_data(filepath))
         
         if len(active_dfs) == 0 and len(iid_dfs) == 0:
-            print("Error: At least one active or IID results file must be provided.")
+            print("Error: At least one of --active_results_dir or --iid_results_dir must be provided.")
             return
         
         plot_metrics_vs_trials(active_dfs=active_dfs if active_dfs else None,

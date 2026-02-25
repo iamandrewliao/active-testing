@@ -589,6 +589,12 @@ def parse_args():
         action='store_true',
         help="If set, each point in the design pool is used at most once (this is for IID and active's initial random phase; active's active phase already samples without replacement (see ActiveTester))."
     )
+    parser.add_argument(
+        '--run_num',
+        type=int,
+        default=None,
+        help="(Offline eval) Run number for meta-folder layout: results/{eval_id}/run_{run_num}/. If set, outputs go under that subfolder."
+    )
 
     args = parser.parse_args()
 
