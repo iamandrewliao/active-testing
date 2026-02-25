@@ -67,7 +67,6 @@ uv run offline_eval.py \
 **`--sample_without_replacement`** Use this flag in either eval.py or offline_eval.py to sample without replacement (each point in the design pool is used at most once) in IID testing or the initial random phase of active testing (the active phase already samples without replacement (see ActiveTester)).
 
 - [./viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
-
 Example run commands:
 ```
 # RMSE, log-likelihood over trials (comparison of active vs. IID vs. ground truth)
@@ -84,21 +83,14 @@ uv run viz.py create-rmse-table \
   --model_name SingleTaskGP \
   --task uprightcup \
   --output_file visualizations/robo_eval/uprightcup_offline_rmse_summary_table.csv
-
-# OLD
-uv run viz.py plot-points --results_file results/iid_results.csv --output_file visualizations/robo_eval/iid_points.png
-# For plot-active and animate-active, make sure --model_name and --acq_func_name match what you used during evaluation so the acquired points make sense
-uv run viz.py plot-active --grid_resolution 11 --results_file results/active_results.csv --output_file visualizations/robo_eval/active_plots.png --model_name SingleTaskGP --acq_func_name PSD
-uv run viz.py animate-active --results_file results/active_results.csv --output_file visualizations/robo_eval/active_animation.mp4 --grid_resolution 11 --interval 750 --model_name SingleTaskGP --acq_func_name PSD
-# For plot-comparison it is recommended that --model_name matches what you used during evaluation for consistency (however, you might be interested in other experiments like using a different model post-eval)
-uv run viz.py plot-comparison --grid_resolution 11 --gt_results_file results/bf_results.csv --add_results_file Active results/active_results.csv --add_results_file IID results/iid_results.csv --output_file visualizations/robo_eval/comparison_bf_active_iid.png --model_name SingleTaskGP --plot_mode mean
 ```
-**Note:** The grid_resolution should be a multiple of the resolution used during eval.
+- [model_analysis.ipynb](./model_analysis.ipynb): Notebook for quick plots, hyperparameter tuning
+
+- [test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
+```
+uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
+```
 - [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
 uv run next_data_to_collect.py
-```
-- [./test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
-```
-uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
 ```
