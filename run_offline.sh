@@ -2,9 +2,9 @@
 # Runs offline evaluation N times (stored under one meta-folder per method) and then visualization with mean ± std shading.
 
 # --- Editable Variables ---
-TASK="uprightcup"
+TASK="putgreeninpot"
 MODEL="SingleTaskGP"
-ACQ="PSD"
+ACQ="qEPIG"
 LOAD_PATH="results/${TASK}_bruteforce/results.csv"
 NUM_RUNS=3
 NUM_EVALS=50
@@ -21,15 +21,15 @@ for r in $(seq 1 "$NUM_RUNS"); do
         --load_path "$LOAD_PATH" --model_name "$MODEL" --acq_func_name "$ACQ" \
         --task "$TASK" --eval_id "$ACTIVE_ID" --run_num "$r" --sample_without_replacement
 
-    uv run offline_eval.py --mode iid --num_evals $NUM_EVALS \
-        --load_path "$LOAD_PATH" --model_name "$MODEL" \
-        --task "$TASK" --eval_id "$IID_ID" --run_num "$r" --sample_without_replacement
+    # uv run offline_eval.py --mode iid --num_evals $NUM_EVALS \
+    #     --load_path "$LOAD_PATH" --model_name "$MODEL" \
+    #     --task "$TASK" --eval_id "$IID_ID" --run_num "$r" --sample_without_replacement
 done
 
 # 2. Visualize (plot-metrics-vs-trials discovers run_1..run_N inside each meta-folder)
-uv run viz.py plot-metrics-vs-trials \
-    --gt_results_file "$LOAD_PATH" \
-    --active_results_dir "results/$ACTIVE_ID" \
-    --iid_results_dir "results/$IID_ID" \
-    --task "$TASK" \
-    --output_file "visualizations/robo_eval/${TASK}_offline_metrics_vs_trials_${MODEL}_${ACQ}.png"
+# uv run viz.py plot-metrics-vs-trials \
+#     --gt_results_file "$LOAD_PATH" \
+#     --active_results_dir "results/$ACTIVE_ID" \
+#     --iid_results_dir "results/$IID_ID" \
+#     --task "$TASK" \
+#     --output_file "visualizations/robo_eval/${TASK}_offline_metrics_vs_trials_${MODEL}_${ACQ}.png"

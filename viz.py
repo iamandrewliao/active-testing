@@ -45,6 +45,14 @@ def _load_data(filepath):
         exit()
 
 
+def _active_dir_to_label(dirpath):
+    """Derive a short label from an active results dir path (e.g. .../task_active_offline_Model_ACQ -> Model_ACQ)."""
+    base = os.path.basename(os.path.normpath(dirpath))
+    if "active_offline_" in base:
+        return base.split("active_offline_", 1)[-1]
+    return base
+
+
 def _discover_results_runs(path):
     """
     Discover one or more results runs from a path (meta-folder or single run).
@@ -789,60 +797,50 @@ def plot_comparison_xy(
     print(f"Saved figure to {output_file}.")
 
 
-def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_file=None, model_name=None, task_name=None, 
-                           active_results_files=None, iid_results_files=None):
+def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_file=None, model_name=None, task_name=None,
+                           iid_results_files=None):
     """
     Plots log-likelihood (LL) and RMSE on ground truth test set vs. trials.
-    Compares active testing, IID testing, and ground truth (line at RMSE=0).
-    
-    Supports multiple runs with variance shading. Uses saved models from eval.py at each trial instead of retraining.
-    
+    Compares one or more active testing methods (each with its own line) and one IID baseline.
+
+    Supports multiple runs per method with variance shading. Uses saved models from eval at each trial when available.
+
     Args:
-        active_dfs: List of DataFrames with active testing results (or single DataFrame for backward compatibility)
-        iid_dfs: List of DataFrames with IID testing results (or single DataFrame for backward compatibility)
-        gt_df: DataFrame with ground truth test set
-        output_file: Output path for the plot
-        model_name: Surrogate model name to use (if trained models aren't found)
-        task_name: Task name for configuration
-        active_results_files: List of paths to active results CSV files (used to find saved models)
-        iid_results_files: List of paths to IID results CSV files (used to find saved models)
+        active_series: List of (label, list of DataFrames, list of result CSV paths) for each active method.
+                       Each method can have multiple runs (e.g. run_1..run_N); mean ± std is plotted.
+        iid_dfs: List of DataFrames with IID testing results (single baseline).
+        gt_df: DataFrame with ground truth test set.
+        output_file: Output path for the plot.
+        model_name: Surrogate model name fallback when saved models are not found.
+        task_name: Task name for configuration.
+        iid_results_files: List of paths to IID results CSV files (used to find saved models).
     """
     print(f"Generating metrics vs trials plot -> {output_file}...")
     import pickle
-    
+
+    # Normalize active_series
+    if active_series is None:
+        active_series = []
+
+    if iid_dfs is None:
+        iid_dfs = []
+    elif not isinstance(iid_dfs, list):
+        iid_dfs = [iid_dfs]
+
+    if iid_results_files is None:
+        iid_results_files = []
+    elif not isinstance(iid_results_files, list):
+        iid_results_files = [iid_results_files]
+
+    while len(iid_results_files) < len(iid_dfs):
+        iid_results_files.append(None)
+
     # Prepare ground truth test set
     X_gt, Y_gt = _get_tensors_from_df(gt_df)
     if len(X_gt) < 1:
         print("Error: Ground truth test set is empty.")
         return
 
-    # Normalize inputs to lists for consistent processing
-    if active_dfs is None:
-        active_dfs = []
-    elif not isinstance(active_dfs, list):
-        active_dfs = [active_dfs]
-    
-    if iid_dfs is None:
-        iid_dfs = []
-    elif not isinstance(iid_dfs, list):
-        iid_dfs = [iid_dfs]
-    
-    if active_results_files is None:
-        active_results_files = []
-    elif not isinstance(active_results_files, list):
-        active_results_files = [active_results_files]
-    
-    if iid_results_files is None:
-        iid_results_files = []
-    elif not isinstance(iid_results_files, list):
-        iid_results_files = [iid_results_files]
-    
-    # Ensure we have matching numbers of DataFrames and file paths
-    while len(active_results_files) < len(active_dfs):
-        active_results_files.append(None)
-    while len(iid_results_files) < len(iid_dfs):
-        iid_results_files.append(None)
-    
     def process_runs(dfs, results_files, run_type):
         """Process multiple runs and return metrics arrays."""
         all_rmse_runs = []
@@ -923,108 +921,105 @@ def plot_metrics_vs_trials(active_dfs=None, iid_dfs=None, gt_df=None, output_fil
         
         return all_rmse_runs, all_ll_runs, all_trials_runs
     
-    # Process active and IID runs
-    active_rmse_runs, active_ll_runs, active_trials_runs = process_runs(active_dfs, active_results_files, "active")
-    iid_rmse_runs, iid_ll_runs, iid_trials_runs = process_runs(iid_dfs, iid_results_files, "IID")
-    
     def compute_mean_std(runs_data, trials_runs):
         """Compute mean and std across runs, handling different trial lengths."""
-        # Find max trial number across all runs
         max_trial = max([max(trials) for trials in trials_runs] + [0]) if trials_runs else 0
-        
         if max_trial == 0:
             return [], [], []
-        
-        # Initialize arrays for mean and std
         mean_values = []
         std_values = []
         trial_numbers = []
-        
         for trial_num in range(1, max_trial + 1):
-            # Collect values for this trial across all runs
             trial_values = []
             for run_idx, trials in enumerate(trials_runs):
                 if trial_num in trials:
                     trial_idx = trials.index(trial_num)
                     trial_values.append(runs_data[run_idx][trial_idx])
-            
             if len(trial_values) > 0:
                 mean_values.append(np.mean(trial_values))
                 std_values.append(np.std(trial_values))
                 trial_numbers.append(trial_num)
-        
         return mean_values, std_values, trial_numbers
-    
-    # Compute statistics across runs
-    active_rmse_mean, active_rmse_std, active_trials = compute_mean_std(active_rmse_runs, active_trials_runs)
-    active_ll_mean, active_ll_std, _ = compute_mean_std(active_ll_runs, active_trials_runs)
-    
+
+    # Process each active method -> one line per method
+    active_plot_data = []
+    for label, active_dfs, active_results_files in active_series:
+        if not active_dfs:
+            continue
+        rfiles = list(active_results_files) if active_results_files else []
+        while len(rfiles) < len(active_dfs):
+            rfiles.append(None)
+        active_rmse_runs, active_ll_runs, active_trials_runs = process_runs(active_dfs, rfiles, "active")
+        rmse_mean, rmse_std, trials = compute_mean_std(active_rmse_runs, active_trials_runs)
+        ll_mean, ll_std, _ = compute_mean_std(active_ll_runs, active_trials_runs)
+        active_plot_data.append((label, rmse_mean, rmse_std, trials, ll_mean, ll_std, len(active_dfs)))
+
+    # Process IID baseline (single series)
+    iid_rmse_runs, iid_ll_runs, iid_trials_runs = process_runs(iid_dfs, iid_results_files, "IID")
     iid_rmse_mean, iid_rmse_std, iid_trials = compute_mean_std(iid_rmse_runs, iid_trials_runs)
     iid_ll_mean, iid_ll_std, _ = compute_mean_std(iid_ll_runs, iid_trials_runs)
-    
-    # Create plots
+
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(active_plot_data), 1)))
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', 'h', '*']
+
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-    
+
     # Plot 1: RMSE vs Trials
     ax = axes[0]
-    
-    # Plot active testing with variance shading
-    if len(active_rmse_mean) > 0:
-        ax.plot(active_trials, active_rmse_mean, 'b-o', label='Active Testing', markersize=4, linewidth=1.5)
-        if len(active_dfs) > 1:  # Only show shading if multiple runs
-            ax.fill_between(active_trials, 
-                          np.array(active_rmse_mean) - np.array(active_rmse_std),
-                          np.array(active_rmse_mean) + np.array(active_rmse_std),
-                          alpha=0.2, color='blue')
-    
-    # Plot IID testing with variance shading
+    for idx, (label, rmse_mean, rmse_std, trials, ll_mean, ll_std, num_runs) in enumerate(active_plot_data):
+        if len(rmse_mean) == 0:
+            continue
+        color = colors[idx % len(colors)]
+        marker = markers[idx % len(markers)]
+        lbl = label if num_runs <= 1 else f"{label} (n={num_runs})"
+        ax.plot(trials, rmse_mean, color=color, marker=marker, label=lbl, markersize=4, linewidth=1.5)
+        if num_runs > 1:
+            ax.fill_between(trials,
+                            np.array(rmse_mean) - np.array(rmse_std),
+                            np.array(rmse_mean) + np.array(rmse_std),
+                            alpha=0.2, color=color)
     if len(iid_rmse_mean) > 0:
-        ax.plot(iid_trials, iid_rmse_mean, 'r-s', label='IID Testing', markersize=4, linewidth=1.5)
-        if len(iid_dfs) > 1:  # Only show shading if multiple runs
+        ax.plot(iid_trials, iid_rmse_mean, 'k--s', label='IID' + (f' (n={len(iid_dfs)})' if len(iid_dfs) > 1 else ''), markersize=4, linewidth=1.5)
+        if len(iid_dfs) > 1:
             ax.fill_between(iid_trials,
-                          np.array(iid_rmse_mean) - np.array(iid_rmse_std),
-                          np.array(iid_rmse_mean) + np.array(iid_rmse_std),
-                          alpha=0.2, color='red')
-    
-    ax.axhline(y=0, color='k', linestyle='--', linewidth=1, label='Ground Truth (RMSE=0)')
+                            np.array(iid_rmse_mean) - np.array(iid_rmse_std),
+                            np.array(iid_rmse_mean) + np.array(iid_rmse_std),
+                            alpha=0.2, color='gray')
+    ax.axhline(y=0, color='k', linestyle=':', linewidth=1, label='Ground Truth (RMSE=0)')
     ax.set_xlabel('Number of Trials', fontsize=12)
     ax.set_ylabel('RMSE on Ground Truth Test Set', fontsize=12)
     ax.set_title('RMSE vs. Trials', fontsize=14, fontweight='bold')
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
-    
+
     # Plot 2: Log-Likelihood vs Trials
     ax = axes[1]
-    
-    # Plot active testing with variance shading
-    if len(active_ll_mean) > 0:
-        ax.plot(active_trials, active_ll_mean, 'b-o', label='Active Testing', markersize=4, linewidth=1.5)
-        if len(active_dfs) > 1:  # Only show shading if multiple runs
-            ax.fill_between(active_trials,
-                          np.array(active_ll_mean) - np.array(active_ll_std),
-                          np.array(active_ll_mean) + np.array(active_ll_std),
-                          alpha=0.2, color='blue')
-    
-    # Plot IID testing with variance shading
+    for idx, (label, rmse_mean, rmse_std, trials, ll_mean, ll_std, num_runs) in enumerate(active_plot_data):
+        if len(ll_mean) == 0:
+            continue
+        color = colors[idx % len(colors)]
+        marker = markers[idx % len(markers)]
+        lbl = label if num_runs <= 1 else f"{label} (n={num_runs})"
+        ax.plot(trials, ll_mean, color=color, marker=marker, label=lbl, markersize=4, linewidth=1.5)
+        if num_runs > 1:
+            ax.fill_between(trials,
+                            np.array(ll_mean) - np.array(ll_std),
+                            np.array(ll_mean) + np.array(ll_std),
+                            alpha=0.2, color=color)
     if len(iid_ll_mean) > 0:
-        ax.plot(iid_trials, iid_ll_mean, 'r-s', label='IID Testing', markersize=4, linewidth=1.5)
-        if len(iid_dfs) > 1:  # Only show shading if multiple runs
+        ax.plot(iid_trials, iid_ll_mean, 'k--s', label='IID' + (f' (n={len(iid_dfs)})' if len(iid_dfs) > 1 else ''), markersize=4, linewidth=1.5)
+        if len(iid_dfs) > 1:
             ax.fill_between(iid_trials,
-                          np.array(iid_ll_mean) - np.array(iid_ll_std),
-                          np.array(iid_ll_mean) + np.array(iid_ll_std),
-                          alpha=0.2, color='red')
-    
+                            np.array(iid_ll_mean) - np.array(iid_ll_std),
+                            np.array(iid_ll_mean) + np.array(iid_ll_std),
+                            alpha=0.2, color='gray')
     ax.set_xlabel('Number of Trials', fontsize=12)
     ax.set_ylabel('Log-Likelihood on Ground Truth Test Set', fontsize=12)
     ax.set_title('Log-Likelihood vs. Trials', fontsize=14, fontweight='bold')
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
-    
-    runs_info = ""
-    if len(active_dfs) > 1 or len(iid_dfs) > 1:
-        runs_info = f" ({len(active_dfs)} active, {len(iid_dfs)} IID runs)"
-    
-    plt.suptitle(f'Model Performance Comparison (Model: {model_name}){runs_info}', fontsize=16, y=1.02)
+
+    plt.suptitle(f'Active methods vs IID baseline' + (f' (task: {task_name})' if task_name else ''), fontsize=16, y=1.02)
     plt.tight_layout()
     plt.savefig(output_file, bbox_inches='tight', dpi=150)
     plt.close()
@@ -1280,8 +1275,9 @@ def main():
     
     # --- Command: plot-metrics-vs-trials ---
     parser_metrics = subparsers.add_parser('plot-metrics-vs-trials', help='Plot log-likelihood and RMSE vs trials for active and IID testing')
-    parser_metrics.add_argument('--active_results_dir', type=str, default=None, help='Path to active meta-folder (e.g. results/task_active_offline_Model_PSD). May contain run_1/, run_2/, ... or a single results.csv. Works with 1 or many runs.')
-    parser_metrics.add_argument('--iid_results_dir', type=str, default=None, help='Path to IID meta-folder (e.g. results/task_iid_offline_Model). Same layout as active_results_dir.')
+    parser_metrics.add_argument('--active_results_dir', type=str, action='append', default=None, dest='active_results_dirs', metavar='DIR', help='Path to active meta-folder (e.g. results/task_active_offline_Model_ACQ). May be given multiple times; each method gets one line. Layout: run_1/, run_2/, ... or single results.csv.')
+    parser_metrics.add_argument('--active_label', type=str, action='append', default=None, dest='active_labels', metavar='LABEL', help='Optional display label for the corresponding --active_results_dir (same order). If omitted, label is derived from dir name (e.g. Model_ACQ).')
+    parser_metrics.add_argument('--iid_results_dir', type=str, default=None, help='Path to single IID meta-folder (e.g. results/task_iid_offline_Model). One baseline line for all active methods.')
     parser_metrics.add_argument('--gt_results_file', type=str, required=True, help='Path to ground truth test set CSV')
     parser_metrics.add_argument('--output_file', type=str, default='visualizations/robo_eval/metrics_vs_trials.png', help='Output file path')
     parser_metrics.add_argument('--model_name', type=str, default='SingleTaskGP', help='Surrogate model name')
@@ -1332,34 +1328,37 @@ def main():
 
     elif args.command == 'plot-metrics-vs-trials':
         gt_df = _load_data(args.gt_results_file)
-        
-        # Discover runs from meta-folders (or single run)
-        active_results_files = []
-        active_dfs = []
-        if args.active_results_dir:
-            active_results_files = _discover_results_runs(args.active_results_dir)
-            for filepath in active_results_files:
-                active_dfs.append(_load_data(filepath))
-        
+        active_dirs = args.active_results_dirs or []
+        active_labels_opt = args.active_labels or []
+
+        active_series = []
+        for i, dirpath in enumerate(active_dirs):
+            results_files = _discover_results_runs(dirpath)
+            if not results_files:
+                print(f"Warning: No runs found in {dirpath}, skipping.")
+                continue
+            dfs = [_load_data(fp) for fp in results_files]
+            label = active_labels_opt[i] if i < len(active_labels_opt) else _active_dir_to_label(dirpath)
+            active_series.append((label, dfs, results_files))
+
         iid_results_files = []
         iid_dfs = []
         if args.iid_results_dir:
             iid_results_files = _discover_results_runs(args.iid_results_dir)
             for filepath in iid_results_files:
                 iid_dfs.append(_load_data(filepath))
-        
-        if len(active_dfs) == 0 and len(iid_dfs) == 0:
-            print("Error: At least one of --active_results_dir or --iid_results_dir must be provided.")
+
+        if len(active_series) == 0 and len(iid_dfs) == 0:
+            print("Error: Provide at least one --active_results_dir and/or --iid_results_dir.")
             return
-        
-        plot_metrics_vs_trials(active_dfs=active_dfs if active_dfs else None,
-                              iid_dfs=iid_dfs if iid_dfs else None,
-                              gt_df=gt_df,
-                              output_file=args.output_file,
-                              model_name=args.model_name,
-                              task_name=args.task,
-                              active_results_files=active_results_files if active_results_files else None,
-                              iid_results_files=iid_results_files if iid_results_files else None)
+
+        plot_metrics_vs_trials(active_series=active_series,
+                               iid_dfs=iid_dfs if iid_dfs else None,
+                               gt_df=gt_df,
+                               output_file=args.output_file,
+                               model_name=args.model_name,
+                               task_name=args.task,
+                               iid_results_files=iid_results_files if iid_results_files else None)
 
     elif args.command == 'create-rmse-table':
         eval_df = _load_data(args.eval_results_file)

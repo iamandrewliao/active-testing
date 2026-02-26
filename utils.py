@@ -31,6 +31,7 @@ from scipy.stats import gaussian_kde
 from MDN import MDN, MDNWrapper, train_mdn
 from DeepEnsemble import MLP, DeepEnsembleWrapper, train_ensemble
 from BALD import BALD
+from EPIG import qExpectedPredictiveInformationGain
 
 def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use_mc_dropout=None):
     """
@@ -114,6 +115,13 @@ def get_acquisition_function(model, acq_func_name, mc_points=None):
         acq_func = qBayesianActiveLearningByDisagreement(model=model)
     elif acq_func_name == "BALD":
         acq_func = BALD(model=model)
+    elif acq_func_name == "qEPIG":
+        if mc_points is None:
+             raise ValueError("mc_points must be provided to run_acquisition for qEPIG.")
+        acq_func = qExpectedPredictiveInformationGain(
+            model=model, 
+            mc_points=mc_points
+        )
     else:
         raise ValueError(f"Unknown acq_func_name: {acq_func_name}")
     

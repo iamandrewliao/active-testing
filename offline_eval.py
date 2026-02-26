@@ -20,15 +20,6 @@ the semantics are the same:
 - `--output_file`   : override default `results/{eval_id}/results.csv`
 - `--load_path`     : path to the *source* results CSV to sample from
 - `--task`          : task name (for consistency / logging)
-
-Example:
-    uv run offline_eval.py \\
-        --mode active \\
-        --num_evals 40 \\
-        --num_init_pts 10 \\
-        --load_path results/uprightcup_bruteforce/results.csv \\
-        --task uprightcup \\
-        --eval_id uprightcup_active_offline
 """
 
 import os

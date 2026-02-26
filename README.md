@@ -13,10 +13,10 @@ I have included the following acquisition functions and surrogate models:
 | qNIPV, PSD    | Any                                                                                 |
 | BALD | MDN, Deep Ensemble |
 ## Key files
-- [./testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
-- [./utils.py](./utils.py): Helper functions
+- [testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
+- [utils.py](./utils.py): Helper functions
     - Note: is_valid_point() is highly setup-dependent and will most likely need to be adjusted. 
-- [./factors_config.py](./factors_config.py): Factor configurations for your specific evaluation. Defines factors, tasks, task outcome ranges, etc. Make sure this is set up correctly before moving on to evaluation.
+- [factors_config.py](./factors_config.py): Factor configurations for your specific evaluation. Defines factors, tasks, task outcome ranges, etc. Make sure this is set up correctly before moving on to evaluation.
 If you want to set a custom order of factors for evaluation, change the following:
 ```
 # change the order of factors in this code in get_design_points_robot()
@@ -33,12 +33,13 @@ If you want to set a custom order of values for an individual factor, change the
 # example: viewpoint order 1 -> 2 -> 0
 VIEWPOINT_VALUES = torch.tensor([1.0, 2.0, 0.0], **tkwargs)
 ```
-- [./eval.py](./eval.py): Online evaluation script, run alongside robot policy deployment
+- [eval.py](./eval.py): Online evaluation script, run alongside robot policy deployment
 Example run commands:
 ```
 uv run eval.py --mode brute_force --task uprightcup --max_steps 35 --eval_id uprightcup_bruteforce
 ```
-- [./offline_eval.py](./offline_eval.py): Offline evaluation script (active or IID sampling from brute force/ground truth results)
+- [run_offline.sh](./run_offline.sh): Runs [offline_eval.py](./offline_eval.py) and creates a plot from [viz.py](./viz.py) with user-specified configuration.
+- [offline_eval.py](./offline_eval.py): Offline evaluation script (active or IID sampling from brute force/ground truth results)
 Example run commands:
 ```
 # Active testing
@@ -66,15 +67,18 @@ uv run offline_eval.py \
 
 **`--sample_without_replacement`** Use this flag in either eval.py or offline_eval.py to sample without replacement (each point in the design pool is used at most once) in IID testing or the initial random phase of active testing (the active phase already samples without replacement (see ActiveTester)).
 
-- [./viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
+- [viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
 Example run commands:
 ```
 # RMSE, log-likelihood over trials (comparison of active vs. IID vs. ground truth)
-uv run viz.py plot-metrics-vs-trials \
-  --gt_results_file results/uprightcup_bruteforce/results.csv \
-  --active_results_dir results/uprightcup_active_offline_SingleTaskGP_PSD \
-  --iid_results_dir results/uprightcup_iid_offline_SingleTaskGP \
-  --task uprightcup --output_file visualizations/robo_eval/plot.png
+# Note that you can add multiple active_results_dir e.g. for different surrogate model + acquisition function runs
+uv run viz.py plot-metrics-vs-trials
+  --gt_results_file "results/pickblueblock_bruteforce/results.csv"
+  --active_results_dir "results/pickblueblock_active_offline_DeepEnsemble_BALD"
+  --active_results_dir "results/pickblueblock_active_offline_SingleTaskGP_PSD"
+  --iid_results_dir "results/pickblueblock_iid_offline_SingleTaskGP"
+  --task "pickblueblock"
+  --output_file "visualizations/robo_eval/pickblueblock_offline_metrics_vs_trials_multi.png"
 
 # table of RMSE values for all factor combinations (for the surrogate model trained on either active or IID results)
 uv run viz.py create-rmse-table \
@@ -90,7 +94,7 @@ uv run viz.py create-rmse-table \
 ```
 uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
 ```
-- [./next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
+- [next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
 uv run next_data_to_collect.py
 ```
