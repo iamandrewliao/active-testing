@@ -2,9 +2,9 @@
 # Runs offline evaluation N times (stored under one meta-folder per method) and then visualization with mean ± std shading.
 
 # CHANGE THESE
-TASK="pickblueblock"
-MODEL="SingleTaskGP"
-ACQ="qEPIG"
+TASK="putgreeninpot"
+MODEL="MDN"
+ACQ="BALD"
 LOAD_PATH="results/${TASK}_bruteforce/results.csv"
 NUM_RUNS=7
 NUM_EVALS=100
@@ -25,9 +25,9 @@ for r in $(seq 1 "$NUM_RUNS"); do
         # --active_refit_interval 3 \
         # --active_warm_start
 
-    uv run offline_eval.py --mode iid --num_evals $NUM_EVALS \
-        --load_path "$LOAD_PATH" --model_name "$MODEL" \
-        --task "$TASK" --eval_id "$IID_ID" --run_num "$r" --sample_without_replacement
+    # uv run offline_eval.py --mode iid --num_evals $NUM_EVALS \
+    #     --load_path "$LOAD_PATH" --model_name "$MODEL" \
+    #     --task "$TASK" --eval_id "$IID_ID" --run_num "$r" --sample_without_replacement
 done
 
 # 2. Visualize (plot-metrics-vs-trials discovers run_1..run_N inside each meta-folder)

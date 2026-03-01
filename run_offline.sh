@@ -3,8 +3,8 @@
 
 # CHANGE THESE
 TASK="pickblueblock"
-MODEL="FullyBayesianSingleTaskGP"
-ACQ="qBALD"
+MODEL="MDN"
+ACQ="BALD"
 LOAD_PATH="results/${TASK}_bruteforce/results.csv"
 NUM_RUNS=7
 NUM_EVALS=100

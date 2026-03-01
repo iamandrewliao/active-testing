@@ -148,13 +148,13 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use
         train_Y_norm = (train_Y - y_mean) / y_std
         if model_name == "MDN":
             input_dim = train_X.shape[-1]
-            raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=3, n_hidden_layers=4, dropout_prob=0.2).to(device=train_X.device, dtype=train_X.dtype)
+            raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=2, n_hidden_layers=4, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype)
             train_mdn(raw_model, train_X, train_Y_norm, bounds, epochs=200)
             # MC dropout: default to True (paper method), but can be overridden
             if use_mc_dropout is None:
                 use_mc_dropout = True  # Default: use MC dropout as in paper
             model = MDNWrapper(raw_model, bounds, outcome_stats=outcome_stats, 
-                             use_mc_dropout=use_mc_dropout, num_mc_samples=20)
+                             use_mc_dropout=use_mc_dropout, num_mc_samples=10)
         elif model_name == "DeepEnsemble":
             num_models = 4
             models = [MLP(input_dim=train_X.shape[-1], hidden_dim=32, n_hidden_layers=4, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(num_models)]

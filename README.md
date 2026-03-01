@@ -14,6 +14,7 @@ I have included the following acquisition functions and surrogate models:
 | BALD | MDN, Deep Ensemble |
 | qEPIG, qNIPV | SingleTaskGP |
 ## Key files
+### Helper files:
 - [testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
 - [utils.py](./utils.py): Helper functions
     - Note: is_valid_point() is highly setup-dependent and will most likely need to be adjusted. 
@@ -33,6 +34,7 @@ If you want to set a custom order of factors for evaluation, change the followin
 # example: viewpoint order 1 -> 2 -> 0
 VIEWPOINT_VALUES = torch.tensor([1.0, 2.0, 0.0], **tkwargs)
 ```
+### Evaluation scripts:
 - [eval.py](./eval.py): Online evaluation script, run alongside robot policy deployment
 Example run commands:
 ```
@@ -67,6 +69,12 @@ uv run offline_eval.py \
 
 **`--sample_without_replacement`** Use this flag in either eval.py or offline_eval.py to sample without replacement (each point in the design pool is used at most once) in IID testing or the initial random phase of active testing (the active phase already samples without replacement (see ActiveTester)).
 
+- [test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
+```
+uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
+```
+
+### Visualization:
 - [viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
 Example run commands:
 ```
@@ -90,10 +98,7 @@ uv run viz.py create-rmse-table \
 ```
 - [model_analysis.ipynb](./model_analysis.ipynb): Notebook for quick plots, hyperparameter tuning
 
-- [test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
-```
-uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
-```
+### Data curation:
 - [next_data_to_collect.py](./miscellaneous/next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
 # Surrogate only, save to dir
@@ -101,18 +106,18 @@ uv run miscellaneous/next_data_to_collect.py \
   --results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
   --task pickblueblock --num_points 10 \
   --fix_factor table_height=2.0 \
-  --output_dir results/next_demos
+  --output_dir results/next_demos/pickblueblock
 
 # Observed failures only, save
 uv run miscellaneous/next_data_to_collect.py \
   --results_file results/pickblueblock_bruteforce/results.csv \
   --method observed --num_points 20 \
   --fix_xy_quadrant bottom_left \
-  --output_dir results/next_demos
+  --output_dir results/next_demos/pickblueblock
 
 # Both methods, save both CSVs
 uv run miscellaneous/next_data_to_collect.py \
   --results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
   --method both --num_points 10 \
-  --task pickblueblock --output_dir results/next_demos
+  --task pickblueblock --output_dir results/next_demos/pickblueblock
 ```
