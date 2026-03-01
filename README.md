@@ -4,14 +4,15 @@
 I have included the following acquisition functions and surrogate models:
 | Acq. function     | Surrogate models                                                                                           |
 |-------------------|------------------------------------------------------------------------------------------------------------|
-| qBALD, qNIPV, PSD | SingleTaskGP, I-BNN (Infinite-Width Bayesian NN), FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP, MDN, DeepEnsemble |
+| qBALD, qNIPV, PSD, BALD, qEPIG | SingleTaskGP, I-BNN (Infinite-Width Bayesian NN), FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP, MDN, DeepEnsemble |
 
 ### Compatibility
 | Acq. function | Models that work                                                                    |
 |---------------|-------------------------------------------------------------------------------------|
 | qBALD         | Fully Bayesian models e.g. FullyBayesianSingleTaskGP, SaasFullyBayesianSingleTaskGP |
-| qNIPV, PSD    | Any                                                                                 |
+| PSD    | Any                                                                                 |
 | BALD | MDN, Deep Ensemble |
+| qEPIG, qNIPV | SingleTaskGP |
 ## Key files
 - [testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
 - [utils.py](./utils.py): Helper functions
@@ -19,7 +20,7 @@ I have included the following acquisition functions and surrogate models:
 - [factors_config.py](./factors_config.py): Factor configurations for your specific evaluation. Defines factors, tasks, task outcome ranges, etc. Make sure this is set up correctly before moving on to evaluation.
 If you want to set a custom order of factors for evaluation, change the following:
 ```
-# change the order of factors in this code in get_design_points_robot()
+# To change the order of factors, change this code in get_design_points_robot()
     v_grid, h_grid, x_grid, y_grid = torch.meshgrid(
         VIEWPOINT_VALUES,
         TABLE_HEIGHT_VALUES,
@@ -27,9 +28,8 @@ If you want to set a custom order of factors for evaluation, change the followin
         OBJECT_POS_Y_VALUES,
         indexing="ij",
     )
-```
-If you want to set a custom order of values for an individual factor, change the following:
-```
+
+# To change the order of values for an individual factor, change this code
 # example: viewpoint order 1 -> 2 -> 0
 VIEWPOINT_VALUES = torch.tensor([1.0, 2.0, 0.0], **tkwargs)
 ```
@@ -94,7 +94,25 @@ uv run viz.py create-rmse-table \
 ```
 uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskGP.png --model_name SingleTaskGP --acq_func_name PSD
 ```
-- [next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
+- [next_data_to_collect.py](./miscellaneous/next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
-uv run next_data_to_collect.py
+# Surrogate only, save to dir
+uv run miscellaneous/next_data_to_collect.py \
+  --results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
+  --task pickblueblock --num_points 10 \
+  --fix_factor table_height=2.0 \
+  --output_dir results/next_demos
+
+# Observed failures only, save
+uv run miscellaneous/next_data_to_collect.py \
+  --results_file results/pickblueblock_bruteforce/results.csv \
+  --method observed --num_points 20 \
+  --fix_xy_quadrant bottom_left \
+  --output_dir results/next_demos
+
+# Both methods, save both CSVs
+uv run miscellaneous/next_data_to_collect.py \
+  --results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
+  --method both --num_points 10 \
+  --task pickblueblock --output_dir results/next_demos
 ```

@@ -20,7 +20,9 @@ from factors_config import FACTOR_COLUMNS
 tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
 class ActiveTester:
-    def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name, training_data_factors_path=None, ood_metric="knn", use_train_data_for_surrogate=False, task_name=None):
+    def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name,
+                 training_data_factors_path=None, ood_metric="knn", use_train_data_for_surrogate=False,
+                 task_name=None, active_warm_start=False, active_refit_interval=1):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
@@ -47,6 +49,11 @@ class ActiveTester:
                 self.train_X = torch.cat([self.train_X, self.training_points], dim=0)
                 self.train_Y = torch.cat([self.train_Y, training_Y], dim=0)                
         self.ood_metric = ood_metric # some measure of likelihood of drawing evaluation factor combo f from the training data distribution
+        # Active learning refit / warm-start configuration
+        self.active_warm_start = active_warm_start
+        self.active_refit_interval = int(active_refit_interval) if active_refit_interval is not None else 1
+        self._num_active_acquisitions = 0
+        self._prev_model_state_dict = None
     
     def add_feature(self, points):
         """
@@ -74,7 +81,15 @@ class ActiveTester:
         # print(f"Fitting surrogate model {self.model_name}")
         start_time = time.time()
 
-        # Augment the evaluation points (train_X) with the OOD feature
+        # Decide whether to refit the surrogate this call
+        self._num_active_acquisitions += 1
+        should_refit = (
+            self.model is None
+            or not self.active_warm_start
+            or (self._num_active_acquisitions - 1) % self.active_refit_interval == 0
+        )
+
+        # Augment the evaluation points (train_X) with the OOD feature if needed
         train_X_final = self.train_X
         bounds_final = self.bounds
         if self.training_points is not None:
@@ -82,33 +97,56 @@ class ActiveTester:
             # We need to update bounds for the feature.
             # We can calculate the feature on the full design space to find the max range.
             with torch.no_grad():
-                full_design_space_features = self.add_feature(self.full_design_space)[:, -1] # get just the feature col
+                full_design_space_features = self.add_feature(self.full_design_space)[:, -1]  # get just the feature col
                 max_val = full_design_space_features.max().item()
                 min_val = full_design_space_features.min().item()
-            # Bounds: x=[0,1], y=[0,1], feature=[min, max*buffer]
-            # Expanding slightly helps avoid edge effects in optimization
-            # buffer = 1.1
-            # feature_bounds = torch.tensor([[min_val], [max_val * buffer]], **tkwargs)
             feature_bounds = torch.tensor([[min_val], [max_val]], **tkwargs)
             bounds_final = torch.cat([self.bounds, feature_bounds], dim=1)
         else:
             train_X_final = self.train_X
             bounds_final = self.bounds
 
-        self.model = fit_surrogate_model(train_X_final, self.train_Y, bounds_final, model_name=self.model_name)
+        if should_refit:
+            warm_state = self._prev_model_state_dict if self.active_warm_start and self._prev_model_state_dict is not None else None
+            self.model = fit_surrogate_model(
+                train_X_final,
+                self.train_Y,
+                bounds_final,
+                model_name=self.model_name,
+                warm_start_state_dict=warm_state,
+            )
+            # Cache state dict for future warm-starts
+            try:
+                self._prev_model_state_dict = self.model.state_dict()
+            except Exception:
+                self._prev_model_state_dict = None
 
-        # print(f"Optimizing acquisition function {self.acq_func_name}")
-        # We must likewise augment the available design space (same as full design space but without the already-sampled points)
+            # Update acquisition function to use the new model
+            design_space_input = self.available_design_space
+            mc_points_input = self.mc_points
+            if self.training_points is not None:
+                design_space_input = self.add_feature(self.available_design_space)
+                if self.mc_points is not None:
+                    mc_points_input = self.add_feature(self.mc_points)
+            self.acq_func = get_acquisition_function(
+                model=self.model,
+                acq_func_name=self.acq_func_name,
+                mc_points=mc_points_input,
+            )
+        # If not refitting, reuse existing self.model and self.acq_func, but recompute design_space_input
+        if self.acq_func is None:
+            raise RuntimeError("Acquisition function is not initialized in ActiveTester.")
+
         design_space_input = self.available_design_space
-        mc_points_input = self.mc_points
-
         if self.training_points is not None:
             design_space_input = self.add_feature(self.available_design_space)
-            if self.mc_points is not None:
-                mc_points_input = self.add_feature(self.mc_points)
 
-        self.acq_func = get_acquisition_function(model=self.model, acq_func_name=self.acq_func_name, mc_points=mc_points_input)
-        acquired_point_aug = optimize_acq_func(acq_func=self.acq_func, design_space=design_space_input, discrete=True, normalized_bounds=None)
+        acquired_point_aug = optimize_acq_func(
+            acq_func=self.acq_func,
+            design_space=design_space_input,
+            discrete=True,
+            normalized_bounds=None,
+        )
         # Just return the factor values for the acquired point (assuming they come first)
         num_factors = self.bounds.shape[1]
         acquired_point = acquired_point_aug[:num_factors]

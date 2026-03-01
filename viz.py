@@ -53,6 +53,19 @@ def _active_dir_to_label(dirpath):
     return base
 
 
+def _infer_num_init_pts_from_df(df):
+    """
+    Infer num_init_pts from an active results DataFrame (has 'mode' column).
+    Returns the number of rows with mode == 'initial_random', or None if not applicable.
+    """
+    if df is None or df.empty or "mode" not in df.columns:
+        return None
+    init_mask = df["mode"].astype(str).str.strip().str.lower() == "initial_random"
+    if not init_mask.any():
+        return None
+    return int(init_mask.sum())
+
+
 def _discover_results_runs(path):
     """
     Discover one or more results runs from a path (meta-folder or single run).
@@ -941,8 +954,9 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
                 trial_numbers.append(trial_num)
         return mean_values, std_values, trial_numbers
 
-    # Process each active method -> one line per method
+    # Process each active method -> one line per method; infer num_init_pts from results
     active_plot_data = []
+    num_init_pts_per_series = []
     for label, active_dfs, active_results_files in active_series:
         if not active_dfs:
             continue
@@ -953,6 +967,14 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
         rmse_mean, rmse_std, trials = compute_mean_std(active_rmse_runs, active_trials_runs)
         ll_mean, ll_std, _ = compute_mean_std(active_ll_runs, active_trials_runs)
         active_plot_data.append((label, rmse_mean, rmse_std, trials, ll_mean, ll_std, len(active_dfs)))
+        n_init = _infer_num_init_pts_from_df(active_dfs[0])
+        num_init_pts_per_series.append(n_init)
+
+    # If all active methods share the same num_init_pts, we'll draw a vertical line there
+    active_start_trial = None
+    if active_plot_data and all(n is not None for n in num_init_pts_per_series):
+        if len(set(num_init_pts_per_series)) == 1:
+            active_start_trial = num_init_pts_per_series[0]
 
     # Process IID baseline (single series)
     iid_rmse_runs, iid_ll_runs, iid_trials_runs = process_runs(iid_dfs, iid_results_files, "IID")
@@ -985,7 +1007,8 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
                             np.array(iid_rmse_mean) - np.array(iid_rmse_std),
                             np.array(iid_rmse_mean) + np.array(iid_rmse_std),
                             alpha=0.2, color='gray')
-    ax.axhline(y=0, color='k', linestyle=':', linewidth=1, label='Ground Truth (RMSE=0)')
+    if active_start_trial is not None:
+        ax.axvline(x=active_start_trial, color='gray', linestyle='--', linewidth=1, alpha=0.8, label='Active begins')
     ax.set_xlabel('Number of Trials', fontsize=12)
     ax.set_ylabel('RMSE on Ground Truth Test Set', fontsize=12)
     ax.set_title('RMSE vs. Trials', fontsize=14, fontweight='bold')
@@ -1013,6 +1036,8 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
                             np.array(iid_ll_mean) - np.array(iid_ll_std),
                             np.array(iid_ll_mean) + np.array(iid_ll_std),
                             alpha=0.2, color='gray')
+    if active_start_trial is not None:
+        ax.axvline(x=active_start_trial, color='gray', linestyle='--', linewidth=1, alpha=0.8, label='Active begins')
     ax.set_xlabel('Number of Trials', fontsize=12)
     ax.set_ylabel('Log-Likelihood on Ground Truth Test Set', fontsize=12)
     ax.set_title('Log-Likelihood vs. Trials', fontsize=14, fontweight='bold')

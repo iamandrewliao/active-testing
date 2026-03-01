@@ -33,7 +33,16 @@ from DeepEnsemble import MLP, DeepEnsembleWrapper, train_ensemble
 from BALD import BALD
 from EPIG import qExpectedPredictiveInformationGain
 
-def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use_mc_dropout=None):
+from gpytorch.kernels import ScaleKernel, MaternKernel, RBFKernel
+from gpytorch.priors import GammaPrior, LogNormalPrior
+from gpytorch.likelihoods import GaussianLikelihood
+from gpytorch.constraints.constraints import GreaterThan
+from math import log, sqrt
+
+SQRT2 = sqrt(2)
+SQRT3 = sqrt(3)
+
+def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use_mc_dropout=None, warm_start_state_dict=None):
     """
     Fits and returns surrogate model.
     
@@ -47,18 +56,70 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use
     # print(f"Fitting {model_name} model with {train_X.shape[0]} points...")
     input_transform = Normalize(d=train_X.shape[-1], bounds=bounds) # normalizes X to unit cube [0, 1]^d
     outcome_transform = Standardize(m=1) # standardizes Y to have zero mean and unit variance
-    if model_name=="SingleTaskGP" or model_name == "I-BNN" or model_name == "IBNN": # infinite-width BNN is just a GP with a special kernel
-        if model_name == "SingleTaskGP":
-            kernel = None
-        elif model_name == "I-BNN" or model_name == "IBNN":
-            kernel = InfiniteWidthBNNKernel(depth=3)
+    if model_name == "SingleTaskGP":
+        # 1. Likelihood & Noise Prior
+        # Explicitly define the likelihood with a prior on the noise variance.
+        # noise_prior = GammaPrior(1.1, 0.05)
+        # likelihood = GaussianLikelihood(noise_prior=noise_prior)
+        likelihood = None
+        # Can also set fixed noise value train_Yvar
+        # train_Yvar = torch.full_like(train_Y, 0.2)
+        train_Yvar = None
+        
+        # 2. Kernel, Lengthscale Prior, Outputscale Prior
+        # lengthscale_prior = GammaPrior(3.0, 6.0)
+        # lengthscale_prior = LogNormalPrior(loc=SQRT2 + log(train_X.shape[-1]) * 0.5, scale=SQRT3)
+        # base_kernel = MaternKernel(
+        #     nu=1.5, 
+        #     ard_num_dims=train_X.shape[-1], 
+        #     # lengthscale_prior=lengthscale_prior
+        # )
+        # base_kernel = MaternKernel(
+        #     ard_num_dims=train_X.shape[-1],
+        #     lengthscale_prior=lengthscale_prior,
+        #     lengthscale_constraint=GreaterThan(
+        #         2.5e-2, transform=None, initial_value=lengthscale_prior.mode
+        #     ),
+        # )
+        # outputscale_prior = GammaPrior(2.0, 0.15)
+        # kernel = ScaleKernel(
+        #     base_kernel=base_kernel,
+        #     outputscale_prior=outputscale_prior
+        # )
+        # kernel = base_kernel
+        kernel = None
         model = SingleTaskGP(
             train_X=train_X,
             train_Y=train_Y,
             input_transform=input_transform,
             outcome_transform=outcome_transform,
-            covar_module=kernel
+            covar_module=kernel,
+            likelihood=likelihood,
+            train_Yvar=train_Yvar,
             )
+        # Optionally warm-start hyperparameters from a previous model state
+        if warm_start_state_dict is not None:
+            try:
+                model.load_state_dict(warm_start_state_dict, strict=False)
+            except Exception as e:
+                print(f"Warning: warm-start for SingleTaskGP failed, refitting from scratch. Error: {e}")
+        model.likelihood.noise_covar.register_constraint("raw_noise", GreaterThan(1e-1))
+        mll = ExactMarginalLogLikelihood(likelihood=model.likelihood, model=model)
+        fit_gpytorch_mll(mll)
+    elif model_name == "I-BNN" or model_name == "IBNN": # infinite-width BNN is just a GP with a special kernel
+        kernel = InfiniteWidthBNNKernel(depth=3)
+        model = SingleTaskGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            input_transform=input_transform,
+            outcome_transform=outcome_transform,
+            covar_module=kernel,
+            )
+        if warm_start_state_dict is not None:
+            try:
+                model.load_state_dict(warm_start_state_dict, strict=False)
+            except Exception as e:
+                print(f"Warning: warm-start for I-BNN failed, refitting from scratch. Error: {e}")
         mll = ExactMarginalLogLikelihood(likelihood=model.likelihood, model=model)
         fit_gpytorch_mll(mll)
     elif model_name=="FullyBayesianSingleTaskGP":
@@ -68,7 +129,7 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use
             input_transform=input_transform,
             outcome_transform=outcome_transform
         )
-        fit_fully_bayesian_model_nuts(model)
+        fit_fully_bayesian_model_nuts(model, warmup_steps=128, num_samples=128)
     elif model_name=="SaasFullyBayesianSingleTaskGP":
         model = SaasFullyBayesianSingleTaskGP(
             train_X=train_X,
@@ -87,15 +148,16 @@ def fit_surrogate_model(train_X, train_Y, bounds, model_name="SingleTaskGP", use
         train_Y_norm = (train_Y - y_mean) / y_std
         if model_name == "MDN":
             input_dim = train_X.shape[-1]
-            raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=3, n_hidden_layers=5, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype)
-            train_mdn(raw_model, train_X, train_Y_norm, bounds, epochs=500)
+            raw_model = MDN(input_dim=input_dim, hidden_dim=32, n_components=3, n_hidden_layers=4, dropout_prob=0.2).to(device=train_X.device, dtype=train_X.dtype)
+            train_mdn(raw_model, train_X, train_Y_norm, bounds, epochs=200)
             # MC dropout: default to True (paper method), but can be overridden
             if use_mc_dropout is None:
                 use_mc_dropout = True  # Default: use MC dropout as in paper
             model = MDNWrapper(raw_model, bounds, outcome_stats=outcome_stats, 
-                             use_mc_dropout=use_mc_dropout, num_mc_samples=10)
+                             use_mc_dropout=use_mc_dropout, num_mc_samples=20)
         elif model_name == "DeepEnsemble":
-            models = [MLP(input_dim=train_X.shape[-1], hidden_dim=32, n_hidden_layers=5, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(5)]
+            num_models = 4
+            models = [MLP(input_dim=train_X.shape[-1], hidden_dim=32, n_hidden_layers=4, dropout_prob=0.1).to(device=train_X.device, dtype=train_X.dtype) for _ in range(num_models)]
             train_ensemble(models, train_X, train_Y_norm, bounds, epochs=200)
             model = DeepEnsembleWrapper(models, bounds, outcome_stats=outcome_stats)        
     return model
@@ -602,6 +664,17 @@ def parse_args():
         type=int,
         default=None,
         help="(Offline eval) Run number for meta-folder layout: results/{eval_id}/run_{run_num}/. If set, outputs go under that subfolder."
+    )
+    parser.add_argument(
+        '--active_refit_interval',
+        type=int,
+        default=1,
+        help="In active mode, refit the surrogate every K active trials (K=1 = refit every trial)."
+    )
+    parser.add_argument(
+        '--active_warm_start',
+        action='store_true',
+        help="If set, when refitting the active surrogate, warm-start GP hyperparameters from the previous trial's model state."
     )
 
     args = parser.parse_args()

@@ -260,6 +260,8 @@ def run_offline_active(args, df_source, models_dir):
         ood_metric=args.ood_metric,
         use_train_data_for_surrogate=args.use_train_data_for_surrogate,
         task_name=args.task,
+        active_warm_start=getattr(args, "active_warm_start", False),
+        active_refit_interval=getattr(args, "active_refit_interval", 1),
     )
 
     # For mapping acquired points back to original df rows
@@ -314,6 +316,7 @@ def run_offline_active(args, df_source, models_dir):
                             "use_train_data_for_surrogate": args.use_train_data_for_surrogate,
                             "trial": len(results_data),
                             "mode": "active",
+                            "num_init_pts": args.num_init_pts,
                         },
                         f,
                     )

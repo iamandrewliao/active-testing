@@ -1,3 +1,9 @@
+# Data directories
+results/
+
+# File types
+*.pkl
+
 # Python-generated files
 __pycache__/
 *.py[oc]

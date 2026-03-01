@@ -223,8 +223,21 @@ if __name__ == "__main__":
     mc_points = draw_sobol_samples(
         bounds=BOUNDS, n=128, q=1
     ).squeeze(1).to(**tkwargs)
-    active_sampler = ActiveTester(X_init, Y_init, BOUNDS, sim_pts, mc_points, args.model_name, args.acq_func_name, 
-                                  training_data_factors_path=args.training_data_factors_path, ood_metric=args.ood_metric)
+    active_sampler = ActiveTester(
+        X_init,
+        Y_init,
+        BOUNDS,
+        sim_pts,
+        mc_points,
+        args.model_name,
+        args.acq_func_name,
+        training_data_factors_path=args.training_data_factors_path,
+        ood_metric=args.ood_metric,
+        use_train_data_for_surrogate=False,
+        task_name=args.task,
+        active_warm_start=False,
+        active_refit_interval=1,
+    )
     iid_sampler = IIDSampler(sim_pts)
 
     # Active test

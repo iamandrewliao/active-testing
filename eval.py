@@ -146,11 +146,21 @@ def main(args):
             initial_Y_tensors = [torch.tensor([row['continuous_outcome']], **tkwargs) for row in results_data]
             train_X = torch.stack(initial_X_tensors)
             train_Y = torch.stack(initial_Y_tensors)
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, points, mc_points=None,
-                                   model_name=args.model_name, acq_func_name=args.acq_func_name,
-                                   training_data_factors_path=args.training_data_factors_path, ood_metric=args.ood_metric,
-                                   use_train_data_for_surrogate=args.use_train_data_for_surrogate,
-                                   task_name=args.task)
+            sampler = ActiveTester(
+                train_X,
+                train_Y,
+                BOUNDS,
+                points,
+                mc_points=None,
+                model_name=args.model_name,
+                acq_func_name=args.acq_func_name,
+                training_data_factors_path=args.training_data_factors_path,
+                ood_metric=args.ood_metric,
+                use_train_data_for_surrogate=args.use_train_data_for_surrogate,
+                task_name=args.task,
+                active_warm_start=getattr(args, "active_warm_start", False),
+                active_refit_interval=getattr(args, "active_refit_interval", 1),
+            )
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
             sampler = IIDSampler(points, without_replacement=getattr(args, 'sample_without_replacement', False))
@@ -181,11 +191,21 @@ def main(args):
             train_Y = torch.stack(initial_Y_tensors)
             # When sampling without replacement, active phase only suggests from points not yet used in initial_random
             design_space = sampler.get_remaining_design_space() if getattr(args, 'sample_without_replacement', False) else points
-            sampler = ActiveTester(train_X, train_Y, BOUNDS, design_space, mc_points=None,
-                                   model_name=args.model_name, acq_func_name=args.acq_func_name,
-                                   training_data_factors_path=args.training_data_factors_path, ood_metric=args.ood_metric,
-                                   use_train_data_for_surrogate=args.use_train_data_for_surrogate,
-                                   task_name=args.task)
+            sampler = ActiveTester(
+                train_X,
+                train_Y,
+                BOUNDS,
+                design_space,
+                mc_points=None,
+                model_name=args.model_name,
+                acq_func_name=args.acq_func_name,
+                training_data_factors_path=args.training_data_factors_path,
+                ood_metric=args.ood_metric,
+                use_train_data_for_surrogate=args.use_train_data_for_surrogate,
+                task_name=args.task,
+                active_warm_start=getattr(args, "active_warm_start", False),
+                active_refit_interval=getattr(args, "active_refit_interval", 1),
+            )
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
 
