@@ -2,7 +2,7 @@
 # Runs offline evaluation N times (stored under one meta-folder per method) and then visualization with mean ± std shading.
 
 # CHANGE THESE
-TASK="pickblueblock"
+TASK="uprightcup"
 MODEL="MDN"
 ACQ="BALD"
 LOAD_PATH="results/${TASK}_bruteforce/results.csv"

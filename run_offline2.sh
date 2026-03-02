@@ -2,9 +2,9 @@
 # Runs offline evaluation N times (stored under one meta-folder per method) and then visualization with mean ± std shading.
 
 # CHANGE THESE
-TASK="putgreeninpot"
-MODEL="MDN"
-ACQ="BALD"
+TASK="uprightcup"
+MODEL="FullyBayesianSingleTaskGP"
+ACQ="qBALD"
 LOAD_PATH="results/${TASK}_bruteforce/results.csv"
 NUM_RUNS=7
 NUM_EVALS=100

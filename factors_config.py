@@ -17,12 +17,15 @@ tkwargs = {"dtype": torch.double}
 
 # Object position x: 0 to 1 in 0.1 increments (11 values: 0.0, 0.1, ..., 1.0)
 OBJECT_POS_X_VALUES = torch.tensor([i * 0.1 for i in range(11)], **tkwargs)
+# OBJECT_POS_X_VALUES = torch.tensor([i * 0.1 for i in range(6)], **tkwargs)
 
 # Object position y: 0 to 1 in 0.1 increments (11 values: 0.0, 0.1, ..., 1.0)
 OBJECT_POS_Y_VALUES = torch.tensor([i * 0.1 for i in range(11)], **tkwargs)
+# OBJECT_POS_Y_VALUES = torch.tensor([i * 0.1 for i in range(5, 11)], **tkwargs)
 
 # Table height: 1, 2, 3 inches
 TABLE_HEIGHT_VALUES = torch.tensor([1.0, 2.0, 3.0], **tkwargs)
+# TABLE_HEIGHT_VALUES = torch.tensor([2.0], **tkwargs)
 
 # Camera viewpoint indices: 0=back, 1=backright, 2=right
 VIEWPOINT_VALUES = torch.tensor([0.0, 1.0, 2.0], **tkwargs)
