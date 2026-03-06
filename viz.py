@@ -33,6 +33,12 @@ from factors_config import (
 # Set up torch device and data type
 tkwargs = {"dtype": torch.double, "device": "cpu"}
 
+plt.rcParams.update({
+    "text.usetex": True,
+    "font.family": "serif",
+    "font.serif": ["Times"],
+})
+
 def _load_data(filepath):
     """Loads evaluation data from a CSV file."""
     if not os.path.exists(filepath):
@@ -981,52 +987,26 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
     iid_rmse_mean, iid_rmse_std, iid_trials = compute_mean_std(iid_rmse_runs, iid_trials_runs)
     iid_ll_mean, iid_ll_std, _ = compute_mean_std(iid_ll_runs, iid_trials_runs)
 
-    # Targets for "matching IID final performance"
-    iid_final_rmse = iid_rmse_mean[-1] if len(iid_rmse_mean) > 0 else None
-    iid_final_ll = iid_ll_mean[-1] if len(iid_ll_mean) > 0 else None
-
-    colors = plt.cm.tab10(np.linspace(0, 1, max(len(active_plot_data), 1)))
+    colors = plt.cm.tab10.colors
     # markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', 'h', '*']
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
     # Plot 1: RMSE vs Trials
     ax = axes[0]
-    rmse_match_label_added = False
     for idx, (label, rmse_mean, rmse_std, trials, ll_mean, ll_std, num_runs) in enumerate(active_plot_data):
         if len(rmse_mean) == 0:
             continue
         color = colors[idx % len(colors)]
-        lbl = label if num_runs <= 1 else f"{label} (n={num_runs})"
+        lbl = f"{label}"
         ax.plot(trials, rmse_mean, color=color, marker=None, label=lbl, markersize=4, linewidth=2.5)
         if num_runs > 1:
             ax.fill_between(trials,
                             np.array(rmse_mean) - np.array(rmse_std),
                             np.array(rmse_mean) + np.array(rmse_std),
                             alpha=0.2, color=color)
-        # For this active method, mark first trial where RMSE matches/exceeds IID final RMSE
-        if iid_final_rmse is not None and len(trials) > 0:
-            match_trial = None
-            for t, v in zip(trials, rmse_mean):
-                if v <= iid_final_rmse:
-                    match_trial = t
-                    break
-            if match_trial is not None:
-                line_label = "Active matches final IID RMSE" if not rmse_match_label_added else "_nolegend_"
-                ax.axvline(
-                    x=match_trial,
-                    color=color,
-                    linestyle=':',
-                    linewidth=1.2,
-                    alpha=0.8,
-                    label=line_label,
-                )
-                # Annotate the trial number, offset slightly by index to prevent overlap
-                ax.text(match_trial, ax.get_ylim()[1] * (0.95 - (idx * 0.05)), f'T{match_trial}', color=color, 
-                        fontsize=9, fontweight='bold', ha='right')
-                rmse_match_label_added = True
     if len(iid_rmse_mean) > 0:
-        ax.plot(iid_trials, iid_rmse_mean, 'k--', label='IID' + (f' (n={len(iid_dfs)})' if len(iid_dfs) > 1 else ''), marker=None, markersize=4, linewidth=2.5)
+        ax.plot(iid_trials, iid_rmse_mean, 'k--', label=f'IID (SingleTaskGP)', marker=None, markersize=4, linewidth=2.5)
         if len(iid_dfs) > 1:
             ax.fill_between(iid_trials,
                             np.array(iid_rmse_mean) - np.array(iid_rmse_std),
@@ -1034,49 +1014,30 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
                             alpha=0.2, color='gray')
     if active_start_trial is not None:
         ax.axvline(x=active_start_trial, color='gray', linestyle='--', linewidth=1, alpha=0.8, label='Active begins')
-    ax.set_xlabel('Number of Trials', fontsize=12)
-    ax.set_ylabel('Test RMSE', fontsize=12)
-    ax.set_title('RMSE vs. Trials', fontsize=14, fontweight='bold')
-    ax.legend(fontsize=10)
+    ax.set_xlabel('Number of Trials', fontsize=21)
+    ax.set_ylabel('Test RMSE', fontsize=21)
+    ax.tick_params(axis='x', labelsize=18)
+    ax.tick_params(axis='y', labelsize=18)
+    ax.set_title(r'RMSE vs. Trials $\downarrow$', fontsize=24, fontweight='bold')
+    ax.legend(fontsize=16)
     ax.grid(True, alpha=0.3)
 
     # Plot 2: Log-Likelihood vs Trials
     ax = axes[1]
-    ll_match_label_added = False
+    # ll_match_label_added = False
     for idx, (label, rmse_mean, rmse_std, trials, ll_mean, ll_std, num_runs) in enumerate(active_plot_data):
         if len(ll_mean) == 0:
             continue
         color = colors[idx % len(colors)]
-        lbl = label if num_runs <= 1 else f"{label} (n={num_runs})"
+        lbl = f"{label}"
         ax.plot(trials, ll_mean, color=color, marker=None, label=lbl, markersize=4, linewidth=2.5)
         if num_runs > 1:
             ax.fill_between(trials,
                             np.array(ll_mean) - np.array(ll_std),
                             np.array(ll_mean) + np.array(ll_std),
                             alpha=0.2, color=color)
-        # For this active method, mark first trial where LL matches/exceeds IID final LL
-        if iid_final_ll is not None and len(trials) > 0:
-            match_trial = None
-            for t, v in zip(trials, ll_mean):
-                if v >= iid_final_ll:
-                    match_trial = t
-                    break
-            if match_trial is not None:
-                line_label = "Active matches final IID LL" if not ll_match_label_added else "_nolegend_"
-                ax.axvline(
-                    x=match_trial,
-                    color=color,
-                    linestyle=':',
-                    linewidth=1.2,
-                    alpha=0.8,
-                    label=line_label,
-                )
-                # Annotate the trial number, offset slightly by index to prevent overlap
-                ax.text(match_trial, ax.get_ylim()[1] * (0.95 - (idx * 0.05)), f'T{match_trial}', color=color, 
-                        fontsize=9, fontweight='bold', ha='right')                
-                ll_match_label_added = True
     if len(iid_ll_mean) > 0:
-        ax.plot(iid_trials, iid_ll_mean, 'k--', label='IID' + (f' (n={len(iid_dfs)})' if len(iid_dfs) > 1 else ''), marker=None, markersize=4, linewidth=2.5)
+        ax.plot(iid_trials, iid_ll_mean, 'k--', label=f'IID (SingleTaskGP)', marker=None, markersize=4, linewidth=2.5)
         if len(iid_dfs) > 1:
             ax.fill_between(iid_trials,
                             np.array(iid_ll_mean) - np.array(iid_ll_std),
@@ -1084,14 +1045,16 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
                             alpha=0.2, color='gray')
     if active_start_trial is not None:
         ax.axvline(x=active_start_trial, color='gray', linestyle='--', linewidth=1, alpha=0.8, label='Active begins')
-    ax.set_xlabel('Number of Trials', fontsize=12)
-    ax.set_ylabel('Test Log-Likelihood', fontsize=12)
-    ax.set_title('Log-Likelihood vs. Trials', fontsize=14, fontweight='bold')
-    ax.legend(fontsize=10)
+    ax.set_xlabel('Number of Trials', fontsize=21)
+    ax.set_ylabel('Test Log-Likelihood', fontsize=21)
+    ax.tick_params(axis='x', labelsize=18)
+    ax.tick_params(axis='y', labelsize=18)
+    ax.set_title(r'Log-Likelihood vs. Trials $\uparrow$', fontsize=24, fontweight='bold')
+    ax.legend(fontsize=16, loc='lower right')
     ax.grid(True, alpha=0.3)
-    ax.set_ylim(bottom=-10.0, top=5.0)
+    ax.set_ylim(bottom=-12.5, top=1.5)
 
-    plt.suptitle(f'Active methods vs IID baseline' + (f' (task: {task_name})' if task_name else ''), fontsize=16, y=1.02)
+    plt.suptitle(f'Task: {task_name} ({len(active_dfs)} runs)', fontsize=28)
     plt.tight_layout()
     plt.savefig(output_file, bbox_inches='tight', dpi=150)
     plt.close()

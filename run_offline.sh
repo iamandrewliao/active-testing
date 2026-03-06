@@ -2,22 +2,24 @@
 # Runs offline evaluation N times (stored under one meta-folder per method) and then visualization with mean ± std shading.
 
 # CHANGE THESE
-TASK="uprightcup"
-MODEL="MDN"
-ACQ="BALD"
+TASK="putgreeninpot"
+MODEL="SingleTaskGP"
+ACQ="PSD"
 LOAD_PATH="results/${TASK}_bruteforce/results.csv"
-NUM_RUNS=7
+NUM_RUNS=25
 NUM_EVALS=100
 NUM_INIT_PTS=30
 
 # Meta-folder IDs (each run goes into results/{ID}/run_1/, run_2/, ...)
-ACTIVE_SUFFIX="${MODEL}_${ACQ}" # in case you want to add a description
+START_RUN=1  # Change if you want to start from some specified run number
+# END_RUN=$((START_RUN + NUM_RUNS - 1))
+ACTIVE_SUFFIX="${MODEL}_${ACQ}_noisefloor5e-2" # in case you want to add a description
 ACTIVE_ID="${TASK}_active_offline_${ACTIVE_SUFFIX}"
 # IID_ID="${TASK}_iid_offline_${MODEL}"
 IID_ID="${TASK}_iid_offline_SingleTaskGP"
 
 # 1. Run active and IID evaluations NUM_RUNS times
-for r in $(seq 1 "$NUM_RUNS"); do
+for r in $(seq $START_RUN $NUM_RUNS); do
     echo "--- Run $r / $NUM_RUNS ---"
     uv run offline_eval.py --mode active --num_evals $NUM_EVALS --num_init_pts $NUM_INIT_PTS \
         --load_path "$LOAD_PATH" --model_name "$MODEL" --acq_func_name "$ACQ" \
