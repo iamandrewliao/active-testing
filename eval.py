@@ -1,6 +1,12 @@
 '''
 Main script for robot policy evaluation.
 '''
+import os
+import subprocess
+import sys
+import uuid
+from datetime import datetime
+
 import pandas as pd
 import torch
 import math
@@ -12,9 +18,6 @@ from factors_config import (
     get_design_points_robot, is_valid_point,
     FACTOR_COLUMNS, get_task_config, get_outcome_range, get_success_outcome, get_outcome_descriptions
 )
-import os
-import uuid
-from datetime import datetime
 
 def main(args):
     """Main execution loop."""
@@ -106,6 +109,30 @@ def main(args):
     if loop_start_index >= args.num_evals and args.mode not in ['loaded', 'brute_force']:
         print(f"Evaluation already complete with {loop_start_index} trials. Exiting.")
         return
+
+    # --- Start live plot subprocess (active or iid only) ---
+    if getattr(args, "live_plot", False) and args.mode in ("active", "iid") and getattr(args, "live_plot_gt_file", None):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        live_plot_script = os.path.join(script_dir, "live_plot_eval.py")
+        if not os.path.exists(live_plot_script):
+            print(f"Warning: live plot script not found at {live_plot_script}; skipping live plot.")
+        else:
+            cmd = [
+                sys.executable,
+                live_plot_script,
+                "--results_file", args.output_file,
+                "--gt_results_file", args.live_plot_gt_file,
+                "--model_name", args.model_name or "SingleTaskGP",
+            ]
+            if args.task:
+                cmd += ["--task", args.task]
+            save_path = getattr(args, "live_plot_save_path", None)
+            if save_path:
+                cmd += ["--save_path", save_path]
+                print(f"Starting live plot (saving to {save_path} when new data is available).")
+            else:
+                print(f"Starting live plot (GT: {args.live_plot_gt_file}). Close the plot window to leave it running in background.")
+            subprocess.Popen(cmd, cwd=script_dir, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=os.environ)
 
     # --- Initialize Sampler ---
     sampler = None

@@ -51,11 +51,14 @@ def _load_data(filepath):
         exit()
 
 
-def _active_dir_to_label(dirpath):
-    """Derive a short label from an active results dir path (e.g. .../task_active_offline_Model_ACQ -> Model_ACQ)."""
+def _dir_to_label(dirpath):
+    """Derive a short label from an active results dir path (e.g. .../task_active_offline_Model_ACQ -> Model_ACQ)
+    or an iid results dir path (.../task_iid_Model -> Model)."""
     base = os.path.basename(os.path.normpath(dirpath))
     if "active_offline_" in base:
         return base.split("active_offline_", 1)[-1]
+    if "iid_offline_" in base:
+        return base.split("iid_offline_", 1)[-1]
     return base
 
 
@@ -983,7 +986,17 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
             active_start_trial = num_init_pts_per_series[0]
 
     # Process IID baseline (single series)
-    iid_rmse_runs, iid_ll_runs, iid_trials_runs = process_runs(iid_dfs, iid_results_files, "IID")
+    iid_labels = set()
+    iid_dfs_without_labels = []
+    for df in iid_dfs:
+        df_label, iid_df = df[0], df[1]
+        iid_labels.add(df_label)
+        iid_dfs_without_labels.append(iid_df)
+    if len(iid_labels) > 1:
+        raise ValueError(f"Multiple labels found in IID DataFrames: {label}. Ensure all IID DataFrames have the same label.")
+    elif len(iid_labels) == 1:
+        iid_label = iid_labels.pop()
+    iid_rmse_runs, iid_ll_runs, iid_trials_runs = process_runs(iid_dfs_without_labels, iid_results_files, "IID")
     iid_rmse_mean, iid_rmse_std, iid_trials = compute_mean_std(iid_rmse_runs, iid_trials_runs)
     iid_ll_mean, iid_ll_std, _ = compute_mean_std(iid_ll_runs, iid_trials_runs)
 
@@ -1006,8 +1019,8 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
                             np.array(rmse_mean) + np.array(rmse_std),
                             alpha=0.2, color=color)
     if len(iid_rmse_mean) > 0:
-        ax.plot(iid_trials, iid_rmse_mean, 'k--', label=f'IID (SingleTaskGP)', marker=None, markersize=4, linewidth=2.5)
-        if len(iid_dfs) > 1:
+        ax.plot(iid_trials, iid_rmse_mean, 'k--', label=f'Random ({iid_label})', marker=None, markersize=4, linewidth=2.5)
+        if len(iid_dfs_without_labels) > 1:
             ax.fill_between(iid_trials,
                             np.array(iid_rmse_mean) - np.array(iid_rmse_std),
                             np.array(iid_rmse_mean) + np.array(iid_rmse_std),
@@ -1037,8 +1050,8 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
                             np.array(ll_mean) + np.array(ll_std),
                             alpha=0.2, color=color)
     if len(iid_ll_mean) > 0:
-        ax.plot(iid_trials, iid_ll_mean, 'k--', label=f'IID (SingleTaskGP)', marker=None, markersize=4, linewidth=2.5)
-        if len(iid_dfs) > 1:
+        ax.plot(iid_trials, iid_ll_mean, 'k--', label=f'Random ({iid_label})', marker=None, markersize=4, linewidth=2.5)
+        if len(iid_dfs_without_labels) > 1:
             ax.fill_between(iid_trials,
                             np.array(iid_ll_mean) - np.array(iid_ll_std),
                             np.array(iid_ll_mean) + np.array(iid_ll_std),
@@ -1313,6 +1326,7 @@ def main():
     parser_metrics.add_argument('--active_results_dir', type=str, action='append', default=None, dest='active_results_dirs', metavar='DIR', help='Path to active meta-folder (e.g. results/task_active_offline_Model_ACQ). May be given multiple times; each method gets one line. Layout: run_1/, run_2/, ... or single results.csv.')
     parser_metrics.add_argument('--active_label', type=str, action='append', default=None, dest='active_labels', metavar='LABEL', help='Optional display label for the corresponding --active_results_dir (same order). If omitted, label is derived from dir name (e.g. Model_ACQ).')
     parser_metrics.add_argument('--iid_results_dir', type=str, default=None, help='Path to single IID meta-folder (e.g. results/task_iid_offline_Model). One baseline line for all active methods.')
+    parser_metrics.add_argument('--iid_label', type=str, default=None, help='Optional display label for IID baseline. If omitted, label is derived from dir name (e.g. Model).')
     parser_metrics.add_argument('--gt_results_file', type=str, required=True, help='Path to ground truth test set CSV')
     parser_metrics.add_argument('--output_file', type=str, default='visualizations/robo_eval/metrics_vs_trials.png', help='Output file path')
     parser_metrics.add_argument('--model_name', type=str, default='SingleTaskGP', help='Surrogate model name')
@@ -1373,15 +1387,16 @@ def main():
                 print(f"Warning: No runs found in {dirpath}, skipping.")
                 continue
             dfs = [_load_data(fp) for fp in results_files]
-            label = active_labels_opt[i] if i < len(active_labels_opt) else _active_dir_to_label(dirpath)
+            label = active_labels_opt[i] if i < len(active_labels_opt) else _dir_to_label(dirpath)
             active_series.append((label, dfs, results_files))
 
         iid_results_files = []
         iid_dfs = []
         if args.iid_results_dir:
             iid_results_files = _discover_results_runs(args.iid_results_dir)
+            label = args.iid_label if args.iid_label else _dir_to_label(args.iid_results_dir)
             for filepath in iid_results_files:
-                iid_dfs.append(_load_data(filepath))
+                iid_dfs.append((label, _load_data(filepath)))
 
         if len(active_series) == 0 and len(iid_dfs) == 0:
             print("Error: Provide at least one --active_results_dir and/or --iid_results_dir.")

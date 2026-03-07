@@ -38,7 +38,11 @@ VIEWPOINT_VALUES = torch.tensor([1.0, 2.0, 0.0], **tkwargs)
 - [eval.py](./eval.py): Online evaluation script, run alongside robot policy deployment
 Example run commands:
 ```
+# Brute-force
 uv run eval.py --mode brute_force --task uprightcup --max_steps 35 --eval_id uprightcup_bruteforce
+
+# Active with live plotting (additionally, add --save_path if you're on headless so instead of *showing* the plot it will save a plot and update it instead)
+uv run eval.py --mode active --num_evals 50 --num_init_pts 15 --model_name SingleTaskGP --acq_func_name PSD --task pickblueblock --eval_id pickblueblock_live_demo --live_plot --live_plot_gt_file results/pickblueblock_bruteforce/results.csv
 ```
 - [run_offline.sh](./run_offline.sh): Runs [offline_eval.py](./offline_eval.py) and creates a plot from [viz.py](./viz.py) with user-specified configuration.
 - [offline_eval.py](./offline_eval.py): Offline evaluation script (active or IID sampling from brute force/ground truth results)

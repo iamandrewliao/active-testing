@@ -676,11 +676,31 @@ def parse_args():
         action='store_true',
         help="If set, when refitting the active surrogate, warm-start GP hyperparameters from the previous trial's model state."
     )
+    parser.add_argument(
+        '--live_plot',
+        action='store_true',
+        help="If set (and mode is active or iid), start a live plot of RMSE/log-likelihood vs trial. Requires --live_plot_gt_file.",
+    )
+    parser.add_argument(
+        '--live_plot_gt_file',
+        type=str,
+        default=None,
+        help="Path to brute-force ground truth CSV for live plot (e.g. results/<task>_bruteforce/results.csv). Required when --live_plot is set.",
+    )
+    parser.add_argument(
+        '--live_plot_save_path',
+        type=str,
+        default=None,
+        help="When set with --live_plot, save the plot to this path when new data is available (for headless servers). If omitted, show a live window only.",
+    )
 
     args = parser.parse_args()
 
     if not args.load_path and args.mode=='loaded':
         parser.error("`load_path` must be specified if loading points")
+
+    if getattr(args, 'live_plot', False) and args.mode in ('active', 'iid') and not getattr(args, 'live_plot_gt_file', None):
+        parser.error("--live_plot_gt_file is required when --live_plot is set (for active or iid mode).")
 
     if args.num_init_pts >= args.num_evals and args.mode == 'active':
         raise ValueError("`num_init_pts` must be less than `num_evals` for active learning.")
