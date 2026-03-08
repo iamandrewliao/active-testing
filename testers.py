@@ -22,7 +22,7 @@ tkwargs = {"dtype": torch.double, "device": "cuda" if torch.cuda.is_available() 
 class ActiveTester:
     def __init__(self, initial_X, initial_Y, bounds, full_design_space, mc_points, model_name, acq_func_name,
                  training_data_factors_path=None, ood_metric="knn", use_train_data_for_surrogate=False,
-                 task_name=None, active_warm_start=False, active_refit_interval=1):
+                 task_name=None, active_warm_start=False, active_refit_interval=1, sample_without_replacement=True):
         self.train_X = initial_X
         self.train_Y = initial_Y
         self.bounds = bounds
@@ -31,11 +31,12 @@ class ActiveTester:
         self.acq_func_name = acq_func_name
         self.model = None
         self.acq_func = None
+        self.sample_without_replacement = sample_without_replacement  # when True, pool decreases (each point at most once)
         if mc_points is None:
             self.mc_points = self.full_design_space # integrate over entire design space (no sampling)
         else:
             self.mc_points = mc_points
-        self.available_design_space = self.full_design_space.clone() # mutable design choices (reduces in size with each sample)
+        self.available_design_space = self.full_design_space.clone() # mutable; shrinks each acquisition iff sample_without_replacement
         self.training_points = load_training_data(training_data_factors_path) # contains factor values of the training data as columns
         if self.training_points is not None:
             self.training_points = self.training_points.to(**tkwargs)
@@ -154,8 +155,9 @@ class ActiveTester:
         end_time = time.time()
         # print(f"Active sample selection took {end_time - start_time:.2f} seconds.")
 
-        # Remove the acquired point from the design space
-        self.available_design_space = self.available_design_space[~torch.all(self.available_design_space == acquired_point, dim=1)]
+        # When sampling without replacement, remove the acquired point so the pool decreases
+        if self.sample_without_replacement:
+            self.available_design_space = self.available_design_space[~torch.all(self.available_design_space == acquired_point, dim=1)]
         return acquired_point
 
     def update(self, new_x, new_y):

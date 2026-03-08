@@ -215,39 +215,53 @@ def run_offline_active(args, df_source, models_dir):
 
     X_all, Y_cont, Y_bin, steps = _build_design_tensors(df_source)
     N = X_all.shape[0]
+    wo = getattr(args, "sample_without_replacement", False)
 
-    print(f"Offline active sampling from {N} candidate points in '{args.load_path}'.")
+    if wo and args.num_evals > N:
+        raise ValueError(
+            f"With --sample_without_replacement, num_evals ({args.num_evals}) cannot exceed "
+            f"the source pool size ({N}) in active mode."
+        )
+
+    print(f"Offline active sampling from {N} candidate points in '{args.load_path}'" + (" (without replacement)." if wo else " (with replacement)."))
     print(f"Total offline evals: {args.num_evals} "
           f"(initial_random={args.num_init_pts}, active={args.num_evals - args.num_init_pts}).")
     print(f"Writing results to '{args.output_file}'.")
 
-    # --- Choose initial random points without replacement ---
-    perm = torch.randperm(N)
-    init_idx = perm[: args.num_init_pts]
-    remaining_idx = perm[args.num_init_pts :]
-
-    initial_X = X_all[init_idx]
-    initial_Y = Y_cont[init_idx]
-
-    # Design space for subsequent active sampling (exclude initial points)
-    design_space = X_all[remaining_idx]
+    if wo:
+        # Without replacement: initial points = permutation (no repeats), active phase = remaining only
+        perm = torch.randperm(N)
+        init_idx = perm[: args.num_init_pts]
+        remaining_idx = perm[args.num_init_pts :]
+        initial_X = X_all[init_idx]
+        initial_Y = Y_cont[init_idx]
+        design_space = X_all[remaining_idx]
+        design_indices = remaining_idx.clone()
+    else:
+        # With replacement: initial points drawn with replacement, active phase = full pool (pool never decreases)
+        init_idx = torch.randint(0, N, (args.num_init_pts,), device=X_all.device)
+        initial_X = X_all[init_idx]
+        initial_Y = Y_cont[init_idx]
+        design_space = X_all
+        design_indices = torch.arange(N, device=X_all.device)
 
     # --- Log initial_random points ---
     results_data = []
     for j, idx in enumerate(tqdm(init_idx.tolist(), desc="Initial random", unit="trial")):
-        x0 = X_all[idx]
+        idx_val = int(idx) if isinstance(idx, torch.Tensor) else idx
+        x0 = X_all[idx_val]
         entry = {
             "trial": len(results_data) + 1,
             "mode": "initial_random",
-            "binary_outcome": float(Y_bin[idx].item()),
-            "continuous_outcome": float(Y_cont[idx].item()),
-            "steps_taken": int(steps[idx]),
+            "binary_outcome": float(Y_bin[idx_val].item()),
+            "continuous_outcome": float(Y_cont[idx_val].item()),
+            "steps_taken": int(steps[idx_val]),
         }
         for d, col_name in enumerate(FACTOR_COLUMNS):
             entry[col_name] = float(x0[d].item())
         results_data.append(entry)
 
-    # --- Instantiate ActiveTester with initial data and remaining design space ---
+    # --- Instantiate ActiveTester with initial data and design space ---
     active_tester = ActiveTester(
         initial_X=initial_X,
         initial_Y=initial_Y,
@@ -262,19 +276,17 @@ def run_offline_active(args, df_source, models_dir):
         task_name=args.task,
         active_warm_start=getattr(args, "active_warm_start", False),
         active_refit_interval=getattr(args, "active_refit_interval", 1),
+        sample_without_replacement=wo,
     )
-
-    # For mapping acquired points back to original df rows
-    design_indices = remaining_idx.clone()  # each row in `design_space` corresponds to df row index in X_all
 
     # --- Active sampling loop ---
     num_active_trials = args.num_evals - args.num_init_pts
     for k in tqdm(range(num_active_trials), desc="Active trials", unit="trial"):
         x_next = active_tester.get_next_point()  # [D]
 
-        # Find which row in `design_space` this corresponds to
+        # Find which row in `design_space` this corresponds to (pos); map to original df row index
         pos = _find_index_in_tensor_rows(design_space, x_next)
-        idx = int(design_indices[pos].item())  # original df row index
+        idx = int(design_indices[pos].item())
 
         entry = {
             "trial": len(results_data) + 1,

@@ -187,6 +187,7 @@ def main(args):
                 task_name=args.task,
                 active_warm_start=getattr(args, "active_warm_start", False),
                 active_refit_interval=getattr(args, "active_refit_interval", 1),
+                sample_without_replacement=getattr(args, "sample_without_replacement", False),
             )
         else:
             print("Not enough data for active learning yet. Starting with initial random sampling.")
@@ -232,6 +233,7 @@ def main(args):
                 task_name=args.task,
                 active_warm_start=getattr(args, "active_warm_start", False),
                 active_refit_interval=getattr(args, "active_refit_interval", 1),
+                sample_without_replacement=getattr(args, "sample_without_replacement", False),
             )
 
         print(f"\nTrial {i+1}/{args.num_evals} (mode: {current_mode})")
