@@ -100,6 +100,33 @@ uv run viz.py create-rmse-table \
   --task uprightcup \
   --output_file visualizations/robo_eval/uprightcup_offline_rmse_summary_table.csv
 ```
+- [live_plot_eval.py](./live_plot_eval.py): Functions to help dynamically plot active/random eval results against ground truth (RMSE, log-likelihood). Can be run on its own but usually automatically runs by running eval.py with the --live_plot and --live_plot_gt_file flags.
+Example run commands:
+```
+# Produces live plot window that constantly updates based on some results.csv file(s) of an evaluation (can be currently running); can compare multiple runs by adding more results.csv files in the '--results_file' flag (see command)
+uv run live_plot_eval.py \
+  --results_file results/run_a/results.csv results/run_b/results.csv \
+  --gt_results_file results/task_bruteforce/results.csv \
+  --task my_task \
+  --labels "Run A" "Run B"
+
+# Using '--save_path' saves and constantly updates plots instead
+uv run live_plot_eval.py \
+  --results_file results/run_a/results.csv results/run_b/results.csv \
+  --gt_results_file results/task_bruteforce/results.csv \
+  --task my_task \
+  --labels "Run A" "Run B"
+  --save_path visualizations/robo_eval/comparison
+
+
+# Using '--video_path' generates video comparing multiple runs instead (probably more appropriate to use this when you're finished evaluating)
+uv run live_plot_eval.py \
+  --results_file results/run_a/results.csv results/run_b/results.csv \
+  --gt_results_file results/task_bruteforce/results.csv \
+  --task my_task \
+  --labels "Run A" "Run B" \
+  --video_path visualizations/robo_eval/comparison.mp4
+```
 - [model_analysis.ipynb](./model_analysis.ipynb): Notebook for quick plots, hyperparameter tuning
 
 ### Data curation:

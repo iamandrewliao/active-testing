@@ -8,9 +8,14 @@ when it changes (i.e. after each new trial). Run automatically by eval.py when
 On a headless server, use --save_path to write the plot to an image file each time
 new data is available (e.g. results/<eval_id>/live_plot.png); refresh the file to view.
 
-Usage (manual):
+Usage (manual, single run):
   uv run live_plot_eval.py --results_file results/<eval_id>/results.csv \\
     --gt_results_file results/<task>_bruteforce/results.csv --task <task> --model_name SingleTaskGP
+
+Compare two or more runs (dynamic plot with one line per run):
+  uv run live_plot_eval.py --results_file results/run_a/results.csv results/run_b/results.csv \\
+    --gt_results_file results/<task>_bruteforce/results.csv --task <task> \\
+    --labels "Active 40" "IID 40"
 
 Headless (save image every trial):
   uv run live_plot_eval.py ... --save_path results/<eval_id>/live_plot.png
@@ -126,23 +131,35 @@ def compute_metrics_so_far(results_file, models_dir, gt_X, gt_Y, model_name):
     return trials_list, rmse_list, ll_list
 
 
-def save_video_from_results(results_file, models_dir, gt_X, gt_Y, model_name, task_name, video_path, fps=2.0):
+def save_video_from_results(run_specs, gt_X, gt_Y, model_name, task_name, video_path, fps=2.0):
     """
-    Offline mode: given a completed results.csv and models directory, generate
-    a video showing RMSE and log-likelihood evolving over trials.
+    Offline mode: given one or more (results_file, label, models_dir), generate
+    a video showing RMSE and log-likelihood evolving over trials (one line per run).
     """
-    trials, rmse, ll = compute_metrics_so_far(results_file, models_dir, gt_X, gt_Y, model_name)
-    if not trials:
-        raise ValueError(
-            "No trials found when computing metrics for video. "
-            "Ensure results_file and models exist and that there are at least 2 trials."
-        )
+    # run_specs: list of (results_file, label, models_dir)
+    all_runs = []
+    for results_file, label, models_dir in run_specs:
+        trials, rmse, ll = compute_metrics_so_far(results_file, models_dir, gt_X, gt_Y, model_name)
+        if not trials:
+            raise ValueError(
+                f"No trials found for run '{label}' ({results_file}). "
+                "Ensure results_file and models exist and that there are at least 2 trials."
+            )
+        all_runs.append((label, trials, rmse, ll))
+
+    colors = plt.cm.tab10.colors if len(all_runs) <= 10 else plt.cm.tab20.colors
+    color_cycle = [colors[i % len(colors)] for i in range(len(all_runs))]
 
     fig, (ax_rmse, ax_ll) = plt.subplots(1, 2, figsize=(14, 5))
-    (line_rmse,) = ax_rmse.plot([], [], "b-o", markersize=4, linewidth=1.5, label="Current run")
-    (line_ll,) = ax_ll.plot([], [], "b-o", markersize=4, linewidth=1.5, label="Current run")
+    lines_rmse = []
+    lines_ll = []
+    for i, (label, trials, rmse, ll) in enumerate(all_runs):
+        c = color_cycle[i]
+        (l_rmse,) = ax_rmse.plot([], [], "o-", color=c, markersize=4, linewidth=1.5, label=label)
+        (l_ll,) = ax_ll.plot([], [], "o-", color=c, markersize=4, linewidth=1.5, label=label)
+        lines_rmse.append((l_rmse, trials, rmse))
+        lines_ll.append((l_ll, trials, ll))
 
-    # Configure axes with fixed ranges based on full metric history
     ax_rmse.tick_params(axis='x', labelsize=14)
     ax_rmse.tick_params(axis='y', labelsize=14)
     ax_rmse.set_xlabel("Trial", fontsize=16)
@@ -164,32 +181,39 @@ def save_video_from_results(results_file, models_dir, gt_X, gt_Y, model_name, ta
         title += f" — {task_name}"
     fig.suptitle(title, fontsize=22, y=0.93)
 
-    # Set fixed limits for the whole animation
-    ax_rmse.set_xlim(0, max(trials) + 1)
-    rmin, rmax = min(rmse), max(rmse)
+    all_trials = [t for _, trials, _, _ in all_runs for t in trials]
+    all_rmse = [r for _, _, rmse, _ in all_runs for r in rmse]
+    all_ll = [l for _, _, _, ll in all_runs for l in ll]
+    x_max = max(all_trials) + 1
+    rmin, rmax = min(all_rmse), max(all_rmse)
     rm_margin = (rmax - rmin) * 0.1 or 0.1
+    ax_rmse.set_xlim(0, x_max)
     ax_rmse.set_ylim(rmin - rm_margin, rmax + rm_margin)
-
-    ax_ll.set_xlim(0, max(trials) + 1)
-    lmin, lmax = min(ll), max(ll)
+    lmin, lmax = min(all_ll), max(all_ll)
     ll_margin = (lmax - lmin) * 0.1 or 0.1
+    ax_ll.set_xlim(0, x_max)
     ax_ll.set_ylim(lmin - ll_margin, lmax + ll_margin)
 
     plt.tight_layout(rect=[0, 0, 1, 0.92])
 
     def init():
-        line_rmse.set_data([], [])
-        line_ll.set_data([], [])
-        return line_rmse, line_ll
+        for l_rmse, _, _ in lines_rmse:
+            l_rmse.set_data([], [])
+        for l_ll, _, _ in lines_ll:
+            l_ll.set_data([], [])
+        return [l for l, _, _ in lines_rmse] + [l for l, _, _ in lines_ll]
 
     def update(frame_idx):
-        # Show metrics up to this trial
         end = frame_idx + 1
-        line_rmse.set_data(trials[:end], rmse[:end])
-        line_ll.set_data(trials[:end], ll[:end])
-        return line_rmse, line_ll
+        for (l_rmse, trials, rmse) in lines_rmse:
+            n = min(end, len(trials))
+            l_rmse.set_data(trials[:n], rmse[:n])
+        for (l_ll, trials, ll) in lines_ll:
+            n = min(end, len(trials))
+            l_ll.set_data(trials[:n], ll[:n])
+        return [l for l, _, _ in lines_rmse] + [l for l, _, _ in lines_ll]
 
-    num_frames = len(trials)
+    num_frames = max(len(trials) for _, trials, _, _ in all_runs)
     ani = animation.FuncAnimation(
         fig,
         update,
@@ -226,8 +250,16 @@ def main():
     parser.add_argument(
         "--results_file",
         type=str,
+        nargs="+",
         required=True,
-        help="Path to the current run's results.csv (e.g. results/<eval_id>/results.csv).",
+        help="Path(s) to results.csv. One or more runs; multiple paths compare convergence on the same plot.",
+    )
+    parser.add_argument(
+        "--labels",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Optional labels for each run (same order as --results_file). If omitted, directory names are used.",
     )
     parser.add_argument(
         "--gt_results_file",
@@ -290,14 +322,28 @@ def main():
         )
     print(f"Live plot: using {len(gt_df)} ground truth points (filtered to current design space).")
     gt_X, gt_Y = _get_tensors_from_df(gt_df)
-    models_dir = os.path.join(os.path.dirname(os.path.abspath(args.results_file)), "models")
+
+    # Normalize to list of (results_file, label, models_dir)
+    results_files = args.results_file if isinstance(args.results_file, list) else [args.results_file]
+    if args.labels is not None and len(args.labels) != len(results_files):
+        raise ValueError(
+            f"--labels must have the same length as --results_file "
+            f"({len(args.labels)} vs {len(results_files)})."
+        )
+    labels = args.labels if args.labels is not None else [
+        os.path.basename(os.path.dirname(os.path.abspath(p))) or os.path.basename(p)
+        for p in results_files
+    ]
+    run_specs = [
+        (path, label, os.path.join(os.path.dirname(os.path.abspath(path)), "models"))
+        for path, label in zip(results_files, labels)
+    ]
 
     if args.video_path is not None:
         if args.save_path is not None:
             raise ValueError("Cannot use both --video_path and --save_path. Choose one output mode.")
         save_video_from_results(
-            results_file=args.results_file,
-            models_dir=models_dir,
+            run_specs=run_specs,
             gt_X=gt_X,
             gt_Y=gt_Y,
             model_name=args.model_name,
@@ -307,10 +353,20 @@ def main():
         )
         return
 
-    # Figure: two subplots
+    # Color cycle for multiple runs (distinct, repeatable)
+    colors = plt.cm.tab10.colors if len(run_specs) <= 10 else plt.cm.tab20.colors
+    color_cycle = [colors[i % len(colors)] for i in range(len(run_specs))]
+
+    # Figure: two subplots, one line per run
     fig, (ax_rmse, ax_ll) = plt.subplots(1, 2, figsize=(14, 5))
-    (line_rmse,) = ax_rmse.plot([], [], "b-o", markersize=4, linewidth=1.5, label="Current run")
-    (line_ll,) = ax_ll.plot([], [], "b-o", markersize=4, linewidth=1.5, label="Current run")
+    lines_rmse = []
+    lines_ll = []
+    for i, (_, label, _) in enumerate(run_specs):
+        c = color_cycle[i]
+        (l_rmse,) = ax_rmse.plot([], [], "o-", color=c, markersize=4, linewidth=1.5, label=label)
+        (l_ll,) = ax_ll.plot([], [], "o-", color=c, markersize=4, linewidth=1.5, label=label)
+        lines_rmse.append(l_rmse)
+        lines_ll.append(l_ll)
 
     ax_rmse.tick_params(axis='x', labelsize=14)
     ax_rmse.tick_params(axis='y', labelsize=14)
@@ -333,89 +389,109 @@ def main():
         title += f" — {args.task}"
     fig.suptitle(title, fontsize=22, y=0.93)
 
-    # Only recompute when results file (or model count) has changed
-    last_mtime = [0.0]  # mutable so closure can update
+    # Only recompute when any results file has changed
+    last_mtimes = [0.0] * len(run_specs)
 
     def init():
         ax_rmse.set_xlim(0, 1)
         ax_rmse.set_ylim(0, 1)
         ax_ll.set_xlim(0, 1)
         ax_ll.set_ylim(-5, 1)
-        return line_rmse, line_ll
+        return lines_rmse + lines_ll
 
     def update(_frame):
-        try:
-            st = os.stat(args.results_file)
-        except OSError:
-            return line_rmse, line_ll
-        if st.st_mtime <= last_mtime[0]:
-            return line_rmse, line_ll
-        last_mtime[0] = st.st_mtime
+        any_new = False
+        for i, (results_file, _, _) in enumerate(run_specs):
+            try:
+                st = os.stat(results_file)
+            except OSError:
+                continue
+            if st.st_mtime <= last_mtimes[i]:
+                continue
+            last_mtimes[i] = st.st_mtime
+            any_new = True
 
-        trials, rmse, ll = compute_metrics_so_far(
-            args.results_file,
-            models_dir,
-            gt_X,
-            gt_Y,
-            args.model_name,
-        )
-        if not trials:
-            return line_rmse, line_ll
+        if not any_new:
+            return lines_rmse + lines_ll
+        for i, (results_file, _, _) in enumerate(run_specs):
+            try:
+                last_mtimes[i] = os.stat(results_file).st_mtime
+            except OSError:
+                pass
 
-        line_rmse.set_data(trials, rmse)
-        line_ll.set_data(trials, ll)
+        all_trials, all_rmse, all_ll = [], [], []
+        for i, (results_file, _, models_dir) in enumerate(run_specs):
+            trials, rmse, ll = compute_metrics_so_far(
+                results_file, models_dir, gt_X, gt_Y, args.model_name
+            )
+            lines_rmse[i].set_data(trials, rmse)
+            lines_ll[i].set_data(trials, ll)
+            if trials:
+                all_trials.extend(trials)
+                all_rmse.extend(rmse)
+                all_ll.extend(ll)
 
-        ax_rmse.set_xlim(0, max(trials) + 1)
-        rmin, rmax = min(rmse), max(rmse)
+        if not all_trials:
+            return lines_rmse + lines_ll
+
+        x_max = max(all_trials) + 1
+        ax_rmse.set_xlim(0, x_max)
+        rmin, rmax = min(all_rmse), max(all_rmse)
         margin = (rmax - rmin) * 0.1 or 0.1
         ax_rmse.set_ylim(rmin - margin, rmax + margin)
-        ax_ll.set_xlim(0, max(trials) + 1)
-        lmin, lmax = min(ll), max(ll)
+        ax_ll.set_xlim(0, x_max)
+        lmin, lmax = min(all_ll), max(all_ll)
         margin = (lmax - lmin) * 0.1 or 0.1
         ax_ll.set_ylim(lmin - margin, lmax + margin)
 
-        return line_rmse, line_ll
+        return lines_rmse + lines_ll
 
     plt.tight_layout(rect=[0, 0, 1, 0.92])
 
     if args.save_path:
-        print('SAVE PATH')
         # Headless: poll for new data and save image (no window)
         os.makedirs(os.path.dirname(os.path.abspath(args.save_path)) or ".", exist_ok=True)
         init()
-        last_mtime = 0.0
+        headless_last_mtimes = [0.0] * len(run_specs)
         print(f"Headless mode: saving plot to {args.save_path} when new data is available (Ctrl+C to stop).")
         try:
             while True:
                 time.sleep(args.check_interval)
-                try:
-                    st = os.stat(args.results_file)
-                except OSError:
+                any_new = False
+                for i, (results_file, _, _) in enumerate(run_specs):
+                    try:
+                        st = os.stat(results_file)
+                    except OSError:
+                        continue
+                    if st.st_mtime > headless_last_mtimes[i]:
+                        any_new = True
+                        headless_last_mtimes[i] = st.st_mtime
+                if not any_new:
                     continue
-                if st.st_mtime <= last_mtime:
+                all_trials, all_rmse, all_ll = [], [], []
+                for i, (results_file, _, models_dir) in enumerate(run_specs):
+                    trials, rmse, ll = compute_metrics_so_far(
+                        results_file, models_dir, gt_X, gt_Y, args.model_name
+                    )
+                    lines_rmse[i].set_data(trials, rmse)
+                    lines_ll[i].set_data(trials, ll)
+                    if trials:
+                        all_trials.extend(trials)
+                        all_rmse.extend(rmse)
+                        all_ll.extend(ll)
+                if not all_trials:
                     continue
-                last_mtime = st.st_mtime
-                trials, rmse, ll = compute_metrics_so_far(
-                    args.results_file,
-                    models_dir,
-                    gt_X,
-                    gt_Y,
-                    args.model_name,
-                )
-                if not trials:
-                    continue
-                line_rmse.set_data(trials, rmse)
-                line_ll.set_data(trials, ll)
-                ax_rmse.set_xlim(0, max(trials) + 1)
-                rmin, rmax = min(rmse), max(rmse)
+                x_max = max(all_trials) + 1
+                ax_rmse.set_xlim(0, x_max)
+                rmin, rmax = min(all_rmse), max(all_rmse)
                 margin = (rmax - rmin) * 0.1 or 0.1
                 ax_rmse.set_ylim(rmin - margin, rmax + margin)
-                ax_ll.set_xlim(0, max(trials) + 1)
-                lmin, lmax = min(ll), max(ll)
+                ax_ll.set_xlim(0, x_max)
+                lmin, lmax = min(all_ll), max(all_ll)
                 margin = (lmax - lmin) * 0.1 or 0.1
                 ax_ll.set_ylim(lmin - margin, lmax + margin)
                 fig.savefig(args.save_path, bbox_inches="tight", dpi=150)
-                print(f"Saved live plot ({len(trials)} trials) -> {args.save_path}")
+                print(f"Saved live plot ({len(run_specs)} runs) -> {args.save_path}")
         except KeyboardInterrupt:
             print("Live plot save stopped.")
     else:
