@@ -7,7 +7,7 @@ Select next factor values to collect demos for, using either:
 2) Observed method: use only actual observed failures from a results CSV,
    sorted by outcome (worst first). No surrogate.
 
-You can optionally fix factors, restrict by quadrant, and save outputs to CSV.
+You can optionally fix factors, restrict by one or more (x,y) quadrants (OR), and save outputs to CSV.
 """
 
 import argparse
@@ -26,6 +26,27 @@ from factors_config import (
 )
 
 tkwargs = {"dtype": torch.double, "device": "cpu"}
+
+_VALID_XY_QUADRANTS = frozenset({"bottom_left", "bottom_right", "top_left", "top_right"})
+
+
+def _xy_quadrant_mask(x, y, quadrant: str, thresh: float = 0.5):
+    """
+    Element-wise mask for points in one (x, y) quadrant. x and y may be torch.Tensor or ndarray-like.
+    Quadrants use x,y in [0,1] with split at thresh (default 0.5).
+    """
+    q = quadrant.lower()
+    if q == "bottom_left":
+        return (x <= thresh) & (y <= thresh)
+    if q == "bottom_right":
+        return (x >= thresh) & (y <= thresh)
+    if q == "top_left":
+        return (x <= thresh) & (y >= thresh)
+    if q == "top_right":
+        return (x >= thresh) & (y >= thresh)
+    raise ValueError(
+        f"Unknown quadrant '{quadrant}'. Expected one of: {', '.join(sorted(_VALID_XY_QUADRANTS))}."
+    )
 
 
 def _find_last_trial_model(models_dir: str):
@@ -94,16 +115,16 @@ def _filter_points_by_fixed_factors(points: torch.Tensor, fixed_factors: dict[st
     return points[mask]
 
 
-def _filter_points_by_xy_quadrant(points: torch.Tensor, quadrant: str | None) -> torch.Tensor:
+def _filter_points_by_xy_quadrant(points: torch.Tensor, quadrants: list[str] | None) -> torch.Tensor:
     """
-    Optionally restrict points to an (x, y) quadrant.
+    Optionally restrict points to one or more (x, y) quadrants (OR).
     Quadrants are defined over x,y in [0,1]:
       - bottom_left:  x <= 0.5, y <= 0.5
       - bottom_right: x >=  0.5, y <= 0.5
       - top_left:     x <= 0.5, y >=  0.5
       - top_right:    x >=  0.5, y >=  0.5
     """
-    if quadrant is None:
+    if not quadrants:
         return points
 
     if "x" not in FACTOR_COLUMNS or "y" not in FACTOR_COLUMNS:
@@ -115,18 +136,9 @@ def _filter_points_by_xy_quadrant(points: torch.Tensor, quadrant: str | None) ->
     y = points[:, y_idx]
 
     thresh = 0.5
-
-    quadrant = quadrant.lower()
-    if quadrant == "bottom_left":
-        mask = (x <= thresh) & (y <= thresh)
-    elif quadrant == "bottom_right":
-        mask = (x >= thresh) & (y <= thresh)
-    elif quadrant == "top_left":
-        mask = (x <= thresh) & (y >= thresh)
-    elif quadrant == "top_right":
-        mask = (x >= thresh) & (y >= thresh)
-    else:
-        raise ValueError(f"Unknown quadrant '{quadrant}'. Expected one of: bottom_left, bottom_right, top_left, top_right.")
+    mask = torch.zeros(points.shape[0], dtype=torch.bool, device=points.device)
+    for q in quadrants:
+        mask = mask | _xy_quadrant_mask(x, y, q, thresh)
 
     return points[mask]
 
@@ -137,7 +149,7 @@ def select_certain_failures(
     task_name: str | None = None,
     model_path: str | None = None,
     fixed_factors: dict[str, list[float]] | None = None,
-    xy_quadrant: str | None = None,
+    xy_quadrants: list[str] | None = None,
     var_percentile: float = 0.30,
 ):
     """
@@ -167,7 +179,7 @@ def select_certain_failures(
     print(f"After is_valid_point: {candidates.shape[0]} valid points")
 
     candidates = _filter_points_by_fixed_factors(candidates, fixed_factors or {})
-    candidates = _filter_points_by_xy_quadrant(candidates, xy_quadrant)
+    candidates = _filter_points_by_xy_quadrant(candidates, xy_quadrants)
     print(f"After fixed-factor / quadrant filtering: {candidates.shape[0]} candidate points")
 
     if candidates.shape[0] == 0:
@@ -240,13 +252,13 @@ def select_observed_failures(
     num_points: int,
     task_name: str | None = None,
     fixed_factors: dict[str, list[float]] | None = None,
-    xy_quadrant: str | None = None,
+    xy_quadrants: list[str] | None = None,
 ):
     """
     Select N actual observed failures from a results CSV (no surrogate).
 
     Loads the CSV, keeps only rows with binary_outcome == 0 (failure), applies
-    optional fixed factors and xy quadrant, then sorts by continuous_outcome
+    optional fixed factors and xy quadrant(s) (OR), then sorts by continuous_outcome
     ascending (worst first) and returns the top num_points.
     """
     print("---Selecting observed failures---")
@@ -275,25 +287,17 @@ def select_observed_failures(
             print("No observed failures match the fixed factors; nothing to select.")
             return None
 
-    # Optional: filter by xy quadrant
-    if xy_quadrant and "x" in FACTOR_COLUMNS and "y" in FACTOR_COLUMNS:
+    # Optional: filter by xy quadrant(s) (OR)
+    if xy_quadrants and "x" in FACTOR_COLUMNS and "y" in FACTOR_COLUMNS:
         x = failures["x"].values
         y = failures["y"].values
         thresh = 0.5
-        quadrant = xy_quadrant.lower()
-        if quadrant == "bottom_left":
-            mask = (x <= thresh) & (y <= thresh)
-        elif quadrant == "bottom_right":
-            mask = (x >= thresh) & (y <= thresh)
-        elif quadrant == "top_left":
-            mask = (x <= thresh) & (y >= thresh)
-        elif quadrant == "top_right":
-            mask = (x >= thresh) & (y >= thresh)
-        else:
-            mask = pd.Series(True, index=failures.index)
+        mask = _xy_quadrant_mask(x, y, xy_quadrants[0], thresh)
+        for q in xy_quadrants[1:]:
+            mask = mask | _xy_quadrant_mask(x, y, q, thresh)
         failures = failures.loc[mask]
         if failures.empty:
-            print("No observed failures in the chosen quadrant; nothing to select.")
+            print("No observed failures in the chosen quadrant(s); nothing to select.")
             return None
 
     # Sort by continuous_outcome ascending (worst first)
@@ -385,11 +389,13 @@ def main():
     )
     parser.add_argument(
         "--fix_xy_quadrant",
-        type=str,
+        action="append",
         default=None,
+        metavar="QUADRANT",
         choices=["bottom_left", "bottom_right", "top_left", "top_right"],
         help=(
-            "Optional quadrant restriction for (x, y). "
+            "Optional (x, y) quadrant restriction; may be given multiple times (OR), "
+            "e.g. --fix_xy_quadrant bottom_left --fix_xy_quadrant top_right. "
             "bottom_left: x<=0.5,y<=0.5; bottom_right: x>=0.5,y<=0.5; "
             "top_left: x<=0.5,y>=0.5; top_right: x>=0.5,y>=0.5."
         ),
@@ -423,6 +429,10 @@ def main():
     if args.output_dir:
         os.makedirs(args.output_dir, exist_ok=True)
 
+    xy_quadrants = args.fix_xy_quadrant
+    if xy_quadrants is not None:
+        xy_quadrants = list(dict.fromkeys(xy_quadrants))
+
     if args.method == "certainfail":
         result = select_certain_failures(
             results_file=args.results_file,
@@ -430,7 +440,7 @@ def main():
             task_name=args.task,
             model_path=args.model_path,
             fixed_factors=fixed_factors,
-            xy_quadrant=args.fix_xy_quadrant,
+            xy_quadrants=xy_quadrants,
         )
         if result is not None and args.output_dir:
             points, pred_mean, pred_var = result
@@ -443,7 +453,7 @@ def main():
             num_points=args.num_points,
             task_name=args.task,
             fixed_factors=fixed_factors,
-            xy_quadrant=args.fix_xy_quadrant,
+            xy_quadrants=xy_quadrants,
         )
         if selected_df is not None and args.output_dir:
             out_path = os.path.join(args.output_dir, "next_demos_observed_failures.csv")

@@ -130,32 +130,33 @@ uv run live_plot_eval.py \
 - [model_analysis.ipynb](./model_analysis.ipynb): Notebook for quick plots, hyperparameter tuning
 
 ### Data curation:
-- [next_data_to_collect.py](./miscellaneous/next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
+- [next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
 # Note that you can fix quadrant or other factor values with arguments
 # certain failures method
-uv run miscellaneous/next_data_to_collect.py \
+uv run next_data_to_collect.py \
   --method certainfail \
   --results_file results/uprightcup_active_offline_SingleTaskGP_PSD/run_1/results.csv \
-  --task putgreeninpot \
+  --task uprightcup \
   --num_points 20 \
   --fix_factor table_height=1 \
   --fix_factor table_height=3 \
   --fix_factor camera_azimuth=90 \
-  --fix_factor camera_elevation=70 \
-  --fix_factor camera_distance=84 \
+  --fix_xy_quadrant bottom_left \
+  --fix_xy_quadrant_top_right \
   --output_dir results/next_demos/uprightcup
 
 # observed failures method
-uv run miscellaneous/next_data_to_collect.py \
+uv run next_data_to_collect.py \
   --method observed \
   --results_file results/uprightcup_iid_offline_SingleTaskGP/run_1/results.csv \
-  --task putgreeninpot \
+  --task uprightcup \
   --num_points 20 \
   --fix_factor table_height=1 \
   --fix_factor table_height=3 \
   --fix_factor camera_azimuth=90 \
-  --fix_factor camera_elevation=70 \
-  --fix_factor camera_distance=84 \
+  --fix_xy_quadrant bottom_left \
+  --fix_xy_quadrant_top_right \
   --output_dir results/next_demos/uprightcup
 ```
+[influence_curation.ipynb](./influence_curation.ipynb): Like next_data_to_collect.py, this notebook shows a new method of data curation, using the kernel as an "influence estimator". Currently only works for SingleTaskGP and FullyBayesianSingleTaskGP surrogate models.
