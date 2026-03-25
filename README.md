@@ -132,23 +132,31 @@ uv run live_plot_eval.py \
 ### Data curation:
 - [next_data_to_collect.py](./miscellaneous/next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
-# Surrogate only, save to dir
+# Note that you can fix quadrant or other factor values with arguments
+# Certain failures method only, fixing some factors
 uv run miscellaneous/next_data_to_collect.py \
-  --results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
-  --task pickblueblock --num_points 10 \
+  --method certainfail \
+  --active_results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
+  --num_points 20 \
+  --task pickblueblock \
+  --output_dir results/next_demos/pickblueblock \
   --fix_factor table_height=2.0 \
+  --fix_xy_quadrant bottom_left
+
+# Observed failures only, not fixing factors (note that only one of either active_results_file or iid_results_file should be included)
+uv run miscellaneous/next_data_to_collect.py \
+  --method observed \
+  --iid_results_file results/pickblueblock_iid_offline_SingleTaskGP/run_1/results.csv \
+  --num_points 20 \
+  --task pickblueblock \
   --output_dir results/next_demos/pickblueblock
 
-# Observed failures only, save
+# Both methods, not fixing factors
 uv run miscellaneous/next_data_to_collect.py \
-  --results_file results/pickblueblock_bruteforce/results.csv \
-  --method observed --num_points 20 \
-  --fix_xy_quadrant bottom_left \
+  --method both \
+  --active_results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
+  --iid_results_file results/pickblueblock_iid_offline_SingleTaskGP/run_1/results.csv \
+  --num_points 20 \
+  --task pickblueblock \
   --output_dir results/next_demos/pickblueblock
-
-# Both methods, save both CSVs
-uv run miscellaneous/next_data_to_collect.py \
-  --results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
-  --method both --num_points 10 \
-  --task pickblueblock --output_dir results/next_demos/pickblueblock
 ```

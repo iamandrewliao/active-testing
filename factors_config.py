@@ -28,7 +28,7 @@ TABLE_HEIGHT_VALUES = torch.tensor([1.0, 2.0, 3.0], **tkwargs)
 # TABLE_HEIGHT_VALUES = torch.tensor([1.0], **tkwargs)
 
 # Camera viewpoint indices: 0=back, 1=backright, 2=right
-VIEWPOINT_VALUES = torch.tensor([1.0, 0.0, 2.0], **tkwargs)
+VIEWPOINT_VALUES = torch.tensor([0.0, 1.0, 2.0], **tkwargs)
 # VIEWPOINT_VALUES = torch.tensor([0.0], **tkwargs)
 
 # ============================================================================

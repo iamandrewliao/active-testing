@@ -1,7 +1,7 @@
 """
 Select next factor values to collect demos for, using either:
 
-1) Surrogate method: use a saved surrogate model to pick N "certain failures"
+1) Certain failures method: use a saved surrogate model to pick N "certain failures"
    (low predicted mean and low variance) from the design space.
 
 2) Observed method: use only actual observed failures from a results CSV,
@@ -298,13 +298,13 @@ def select_observed_failures(
     return selected
 
 
-def _save_surrogate_points(
+def _save_certain_failures_points(
     points: torch.Tensor,
     pred_mean: torch.Tensor,
     pred_var: torch.Tensor,
     filepath: str,
 ) -> None:
-    """Save surrogate method output to CSV (factor columns + pred_mean, pred_variance)."""
+    """Save certain failures method output to CSV (factor columns + pred_mean, pred_variance)."""
     rows = []
     for i in range(points.shape[0]):
         row = {name: points[i, j].item() for j, name in enumerate(FACTOR_COLUMNS)}
@@ -337,20 +337,20 @@ def main():
         type=str,
         default=None,
         help="Path to IID testing results.csv for the observed method. "
-        "If omitted, uses --active_results_file for both surrogate and observed.",
+        "If omitted, uses --active_results_file for both certain failures and observed methods.",
     )
     parser.add_argument(
         "--method",
         type=str,
-        choices=["surrogate", "observed", "both"],
-        default="surrogate",
-        help="Selection method: surrogate (model-based on active), observed (failures from IID or active), or both.",
+        choices=["certainfail", "observed", "both"],
+        default="both",
+        help="Selection method: certainfail (model-based on active), observed (failures from IID or active), or both.",
     )
     parser.add_argument(
         "--model_path",
         type=str,
         default=None,
-        help="Optional explicit path to a saved model .pkl (for surrogate method). "
+        help="Optional explicit path to a saved model .pkl (for certainfail method). "
         "If omitted, looks for trial_XX_model.pkl under dirname(results_file)/models/.",
     )
     parser.add_argument(
@@ -391,7 +391,7 @@ def main():
         type=str,
         default=None,
         help="If set, save selected points to CSV(s) here: "
-        "next_demos_surrogate_certain_failures.csv and/or next_demos_observed_failures.csv.",
+        "next_demos_certain_failures.csv and/or next_demos_observed_failures.csv.",
     )
 
     args = parser.parse_args()
@@ -410,7 +410,7 @@ def main():
                 raise ValueError(f"Could not parse value '{val_str}' in --fix_factor '{spec}' as float.")
             fixed_factors[name] = value
 
-    run_surrogate = args.method in ("surrogate", "both")
+    run_certainfail = args.method in ("certainfail", "both")
     run_observed = args.method in ("observed", "both")
 
     # Determine which results file to use for observed failures
@@ -423,7 +423,7 @@ def main():
     if args.output_dir:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    if run_surrogate:
+    if run_certainfail:
         result = select_certain_failures(
             results_file=args.active_results_file,
             num_points=args.num_points,
@@ -434,8 +434,8 @@ def main():
         )
         if result is not None and args.output_dir:
             points, pred_mean, pred_var = result
-            out_path = os.path.join(args.output_dir, "next_demos_surrogate_certain_failures.csv")
-            _save_surrogate_points(points, pred_mean, pred_var, out_path)
+            out_path = os.path.join(args.output_dir, "next_demos_certain_failures.csv")
+            _save_certain_failures_points(points, pred_mean, pred_var, out_path)
 
     if run_observed:
         selected_df = select_observed_failures(
