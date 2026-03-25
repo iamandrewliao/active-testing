@@ -74,19 +74,22 @@ def _load_model_from_results(results_file: str, explicit_model_path: str | None 
     return model
 
 
-def _filter_points_by_fixed_factors(points: torch.Tensor, fixed_factors: dict[str, float]) -> torch.Tensor:
-    """Apply optional factor fixes (e.g., table_height=2, x=0.5) to the design space."""
+def _filter_points_by_fixed_factors(points: torch.Tensor, fixed_factors: dict[str, list[float]]) -> torch.Tensor:
+    """Apply optional factor fixes to the design space (OR within each factor, AND across factors)."""
     mask = torch.ones(points.shape[0], dtype=torch.bool, device=points.device)
 
     if not fixed_factors:
         return points
 
-    for name, value in fixed_factors.items():
+    for name, values in fixed_factors.items():
         if name not in FACTOR_COLUMNS:
             raise ValueError(f"FACTOR_COLUMNS does not contain '{name}'; cannot fix this factor.")
         idx = FACTOR_COLUMNS.index(name)
-        target = torch.tensor(value, **tkwargs)
-        mask = mask & torch.isclose(points[:, idx], target, atol=1e-6)
+        factor_mask = torch.zeros(points.shape[0], dtype=torch.bool, device=points.device)
+        for value in values:
+            target = torch.tensor(value, **tkwargs)
+            factor_mask = factor_mask | torch.isclose(points[:, idx], target, atol=1e-6)
+        mask = mask & factor_mask
 
     return points[mask]
 
@@ -133,7 +136,7 @@ def select_certain_failures(
     num_points: int,
     task_name: str | None = None,
     model_path: str | None = None,
-    fixed_factors: dict[str, float] | None = None,
+    fixed_factors: dict[str, list[float]] | None = None,
     xy_quadrant: str | None = None,
     var_percentile: float = 0.30,
 ):
@@ -179,14 +182,22 @@ def select_certain_failures(
         mean = posterior.mean
         var = posterior.variance
 
-    # Squeeze to 1D
+    # Squeeze trailing singleton dims, then reduce Bayesian sample dim if present.
+    # For fully Bayesian GPs, posterior mean/var are often [S, N], where S is #samples.
     while mean.ndim > 1 and mean.shape[-1] == 1:
         mean = mean.squeeze(-1)
     while var.ndim > 1 and var.shape[-1] == 1:
         var = var.squeeze(-1)
 
+    if mean.ndim == 2:
+        mean = mean.mean(dim=0)
+    if var.ndim == 2:
+        var = var.mean(dim=0)
+
     if mean.ndim != 1 or var.ndim != 1:
-        raise RuntimeError(f"Unexpected posterior shapes: mean {mean.shape}, var {var.shape}")
+        raise RuntimeError(
+            f"Unexpected posterior shapes after Bayesian reduction: mean {mean.shape}, var {var.shape}"
+        )
 
     mean_cpu = mean.cpu()
     var_cpu = var.cpu()
@@ -228,7 +239,7 @@ def select_observed_failures(
     results_file: str,
     num_points: int,
     task_name: str | None = None,
-    fixed_factors: dict[str, float] | None = None,
+    fixed_factors: dict[str, list[float]] | None = None,
     xy_quadrant: str | None = None,
 ):
     """
@@ -252,11 +263,14 @@ def select_observed_failures(
 
     # Optional: filter by fixed factors
     if fixed_factors:
-        for name, value in fixed_factors.items():
+        for name, values in fixed_factors.items():
             if name not in FACTOR_COLUMNS:
                 raise ValueError(f"FACTOR_COLUMNS does not contain '{name}'.")
-            # Allow small float tolerance
-            failures = failures[failures[name].sub(value).abs() < 1e-6]
+            # OR within a factor: keep rows matching any listed value for this factor
+            factor_mask = False
+            for value in values:
+                factor_mask = factor_mask | (failures[name].sub(value).abs() < 1e-6)
+            failures = failures[factor_mask]
         if failures.empty:
             print("No observed failures match the fixed factors; nothing to select.")
             return None
@@ -323,28 +337,21 @@ def _save_observed_points(selected_df: pd.DataFrame, filepath: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Select next demo points: surrogate 'certain failures' from active testing, "
-        "and/or observed failures from IID testing results."
+        description="Select next demo points from one results file using either certain failures "
+        "(surrogate-based) or observed failures."
     )
     parser.add_argument(
-        "--active_results_file",
+        "--results_file",
         type=str,
         required=True,
-        help="Path to active testing results.csv produced by eval.py or offline_eval.py.",
-    )
-    parser.add_argument(
-        "--iid_results_file",
-        type=str,
-        default=None,
-        help="Path to IID testing results.csv for the observed method. "
-        "If omitted, uses --active_results_file for both certain failures and observed methods.",
+        help="Path to results.csv produced by eval.py or offline_eval.py. Works for active or IID runs.",
     )
     parser.add_argument(
         "--method",
         type=str,
-        choices=["certainfail", "observed", "both"],
-        default="both",
-        help="Selection method: certainfail (model-based on active), observed (failures from IID or active), or both.",
+        choices=["certainfail", "observed"],
+        default="certainfail",
+        help="Selection method: certainfail (model-based) or observed (actual failure rows).",
     )
     parser.add_argument(
         "--model_path",
@@ -372,7 +379,8 @@ def main():
         metavar="NAME=VALUE",
         help=(
             "Optional factor fix; may be given multiple times. "
-            "Example: --fix_factor table_height=2.0 --fix_factor x=0.5"
+            "Multiple entries with the same NAME are treated as allowed values (OR), "
+            "e.g. --fix_factor table_height=1 --fix_factor table_height=3."
         ),
     )
     parser.add_argument(
@@ -390,14 +398,14 @@ def main():
         "--output_dir",
         type=str,
         default=None,
-        help="If set, save selected points to CSV(s) here: "
-        "next_demos_certain_failures.csv and/or next_demos_observed_failures.csv.",
+        help="If set, save selected points to CSV here: "
+        "next_demos_certain_failures.csv or next_demos_observed_failures.csv.",
     )
 
     args = parser.parse_args()
 
-    # Parse fixed factors from NAME=VALUE strings into a dict[str, float]
-    fixed_factors: dict[str, float] = {}
+    # Parse fixed factors from NAME=VALUE strings into a dict[str, list[float]]
+    fixed_factors: dict[str, list[float]] = {}
     if args.fix_factor:
         for spec in args.fix_factor:
             if "=" not in spec:
@@ -408,24 +416,16 @@ def main():
                 value = float(val_str)
             except ValueError:
                 raise ValueError(f"Could not parse value '{val_str}' in --fix_factor '{spec}' as float.")
-            fixed_factors[name] = value
-
-    run_certainfail = args.method in ("certainfail", "both")
-    run_observed = args.method in ("observed", "both")
-
-    # Determine which results file to use for observed failures
-    if args.iid_results_file and os.path.exists(args.iid_results_file):
-        observed_results_file = args.iid_results_file
-    else:
-        observed_results_file = args.active_results_file
-        print(f"No --iid_results_file provided; using --{observed_results_file} for observed failures")
+            if name not in fixed_factors:
+                fixed_factors[name] = []
+            fixed_factors[name].append(value)
 
     if args.output_dir:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    if run_certainfail:
+    if args.method == "certainfail":
         result = select_certain_failures(
-            results_file=args.active_results_file,
+            results_file=args.results_file,
             num_points=args.num_points,
             task_name=args.task,
             model_path=args.model_path,
@@ -437,9 +437,9 @@ def main():
             out_path = os.path.join(args.output_dir, "next_demos_certain_failures.csv")
             _save_certain_failures_points(points, pred_mean, pred_var, out_path)
 
-    if run_observed:
+    if args.method == "observed":
         selected_df = select_observed_failures(
-            results_file=observed_results_file,
+            results_file=args.results_file,
             num_points=args.num_points,
             task_name=args.task,
             fixed_factors=fixed_factors,

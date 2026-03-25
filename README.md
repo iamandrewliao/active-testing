@@ -133,30 +133,29 @@ uv run live_plot_eval.py \
 - [next_data_to_collect.py](./miscellaneous/next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
 ```
 # Note that you can fix quadrant or other factor values with arguments
-# Certain failures method only, fixing some factors
+# certain failures method
 uv run miscellaneous/next_data_to_collect.py \
   --method certainfail \
-  --active_results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
+  --results_file results/uprightcup_active_offline_SingleTaskGP_PSD/run_1/results.csv \
+  --task putgreeninpot \
   --num_points 20 \
-  --task pickblueblock \
-  --output_dir results/next_demos/pickblueblock \
-  --fix_factor table_height=2.0 \
-  --fix_xy_quadrant bottom_left
+  --fix_factor table_height=1 \
+  --fix_factor table_height=3 \
+  --fix_factor camera_azimuth=90 \
+  --fix_factor camera_elevation=70 \
+  --fix_factor camera_distance=84 \
+  --output_dir results/next_demos/uprightcup
 
-# Observed failures only, not fixing factors (note that only one of either active_results_file or iid_results_file should be included)
+# observed failures method
 uv run miscellaneous/next_data_to_collect.py \
   --method observed \
-  --iid_results_file results/pickblueblock_iid_offline_SingleTaskGP/run_1/results.csv \
+  --results_file results/uprightcup_iid_offline_SingleTaskGP/run_1/results.csv \
+  --task putgreeninpot \
   --num_points 20 \
-  --task pickblueblock \
-  --output_dir results/next_demos/pickblueblock
-
-# Both methods, not fixing factors
-uv run miscellaneous/next_data_to_collect.py \
-  --method both \
-  --active_results_file results/pickblueblock_active_offline_SingleTaskGP_PSD/run_1/results.csv \
-  --iid_results_file results/pickblueblock_iid_offline_SingleTaskGP/run_1/results.csv \
-  --num_points 20 \
-  --task pickblueblock \
-  --output_dir results/next_demos/pickblueblock
+  --fix_factor table_height=1 \
+  --fix_factor table_height=3 \
+  --fix_factor camera_azimuth=90 \
+  --fix_factor camera_elevation=70 \
+  --fix_factor camera_distance=84 \
+  --output_dir results/next_demos/uprightcup
 ```

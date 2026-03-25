@@ -1,4 +1,0 @@
-trial,mode,binary_outcome,continuous_outcome,steps_taken,x,y,table_height,camera_azimuth,camera_elevation,camera_distance
-1,initial_random,0.0,2.5,,0.0,1.0,2.0,90.0,70.0,84.0
-2,initial_random,1.0,6.0,16.0,0.2,0.2,3.0,90.0,70.0,84.0
-3,initial_random,0.0,3.5,,0.4,0.7000000000000001,1.0,90.0,70.0,84.0
