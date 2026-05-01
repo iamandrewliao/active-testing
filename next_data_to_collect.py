@@ -176,11 +176,11 @@ def select_certain_failures(
         device=all_points.device,
     )
     candidates = all_points[valid_mask]
-    print(f"After is_valid_point: {candidates.shape[0]} valid points")
+    print(f"After is_valid_point filtering: {candidates.shape[0]} valid points")
 
     candidates = _filter_points_by_fixed_factors(candidates, fixed_factors or {})
     candidates = _filter_points_by_xy_quadrant(candidates, xy_quadrants)
-    print(f"After fixed-factor / quadrant filtering: {candidates.shape[0]} candidate points")
+    print(f"After factor filtering: {candidates.shape[0]} candidate points")
 
     if candidates.shape[0] == 0:
         print("No candidate points remain after filtering; nothing to select.")
