@@ -14,10 +14,12 @@ I have included the following acquisition functions and surrogate models:
 | BALD | MDN, Deep Ensemble |
 | qEPIG, qNIPV | SingleTaskGP |
 ## Key files
-### Helper files:
+### Helper files (IMPORTANT):
 - [testers.py](./testers.py): Implements the logic for active testing, iid testing (uniform-random), loading points, etc.
-- [utils.py](./utils.py): Helper functions
-    - Note: is_valid_point() is highly setup-dependent and will most likely need to be adjusted. 
+- [utils.py](./utils.py): Helper functions and flags
+  - example of functions and flags you might want to change:
+    - is_valid_point() is highly setup-dependent and will most likely need to be adjusted. 
+    - You can play around with warm start (example usage: --active_warm_start) and surrogate refit interval (example usage: --active_refit_interval 3)
 - [factors_config.py](./factors_config.py): Factor configurations for your specific evaluation. Defines factors, tasks, task outcome ranges, etc. Make sure this is set up correctly before moving on to evaluation.
 If you want to set a custom order of factors for evaluation, change the following:
 ```
@@ -45,7 +47,7 @@ uv run eval.py --mode brute_force --task uprightcup --max_steps 35 --eval_id upr
 uv run eval.py --mode active --num_evals 50 --num_init_pts 15 --model_name SingleTaskGP --acq_func_name PSD --task pickblueblock --eval_id pickblueblock_live_demo --live_plot --live_plot_gt_file results/pickblueblock_bruteforce/results.csv
 ```
 - [run_offline.sh](./run_offline.sh): Runs [offline_eval.py](./offline_eval.py) and creates a plot from [viz.py](./viz.py) with user-specified configuration.
-- [offline_eval.py](./offline_eval.py): Offline evaluation script (active or IID sampling from brute force/ground truth results)
+- [offline_eval.py](./offline_eval.py): Offline evaluation script (active or uniform-random sampling from brute force/ground truth results)
 Example run commands:
 ```
 # Active testing
@@ -60,7 +62,7 @@ uv run offline_eval.py \
   --eval_id uprightcup_active_offline \
   --sample_without_replacement
 
-# IID testing
+# Uniform-random testing
 uv run offline_eval.py \
   --mode iid \
   --num_evals 50 \
@@ -71,7 +73,7 @@ uv run offline_eval.py \
   --sample_without_replacement
 ```
 
-**`--sample_without_replacement`** Use this flag in either eval.py or offline_eval.py to sample without replacement (each point in the design pool is used at most once) in IID testing or the initial random phase of active testing (the active phase already samples without replacement (see ActiveTester)).
+**`--sample_without_replacement`** Use this flag in either eval.py or offline_eval.py to sample without replacement (each point in the design pool is used at most once) in uniform-random testing or the initial random phase of active testing (the active phase already samples without replacement (see ActiveTester)).
 
 - [test_active.py](./test_active.py): Evaluate active testing components (surrogate, acq. function) on test functions like Hartmann, visualize metrics
 ```
@@ -82,17 +84,20 @@ uv run test_active.py --save_path ./visualizations/test_function/PSD_SingleTaskG
 - [viz.py](./viz.py): Visualization script for eval results, surrogate model, acquisition function, etc.
 Example run commands:
 ```
-# RMSE, log-likelihood over trials (comparison of active vs. IID vs. ground truth)
-# Note that you can add multiple active_results_dir e.g. for different surrogate model + acquisition function runs
+# RMSE, log-likelihood over trials (comparison of active vs. random vs. ground truth)
+# Note that you can
+# 1. add multiple active_results_dir e.g. for different surrogate model + acquisition function runs
+# 2. choose --metrics ('rmse', 'll' (log-likelihood), or 'both')
 uv run viz.py plot-metrics-vs-trials
   --gt_results_file "results/pickblueblock_bruteforce/results.csv"
   --active_results_dir "results/pickblueblock_active_offline_DeepEnsemble_BALD"
   --active_results_dir "results/pickblueblock_active_offline_SingleTaskGP_PSD"
   --iid_results_dir "results/pickblueblock_iid_offline_SingleTaskGP"
   --task "pickblueblock"
+  --metrics both
   --output_file "visualizations/robo_eval/pickblueblock_offline_metrics_vs_trials_multi.png"
 
-# table of RMSE values for all factor combinations (for the surrogate model trained on either active or IID results)
+# table of RMSE values for all factor combinations (for the surrogate model trained on either active or random results)
 uv run viz.py create-rmse-table \
   --eval_results_file results/uprightcup_active_offline/results.csv \
   --gt_results_file results/uprightcup_bruteforce/results.csv \
@@ -127,7 +132,7 @@ uv run live_plot_eval.py \
   --labels "Run A" "Run B" \
   --video_path visualizations/robo_eval/comparison.mp4
 ```
-- [model_analysis.ipynb](./model_analysis.ipynb): Notebook for quick plots, hyperparameter tuning
+- [analysis.ipynb](./analysis.ipynb): Notebook to analyze generalization, surrogate performance, and the data curation experiment
 
 ### Data curation:
 - [next_data_to_collect.py](./next_data_to_collect.py): Based on active testing results, determines what data to collect (and retrain on) next. (TO DO: add other more interesting methods)
@@ -159,4 +164,4 @@ uv run next_data_to_collect.py \
   --fix_xy_quadrant_top_right \
   --output_dir results/next_demos/uprightcup
 ```
-[influence_curation.ipynb](./influence_curation.ipynb): Like next_data_to_collect.py, this notebook shows a new method of data curation, using the kernel as an "influence estimator". Currently only works for SingleTaskGP and FullyBayesianSingleTaskGP surrogate models.
+[influence_curation.ipynb](./influence_curation.ipynb): This notebook shows a new method of data curation, using the kernel as an "influence estimator". Currently only works for SingleTaskGP and FullyBayesianSingleTaskGP surrogate models.

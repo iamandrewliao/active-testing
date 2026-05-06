@@ -820,7 +820,7 @@ def plot_comparison_xy(
 
 
 def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_file=None, model_name=None, task_name=None,
-                           iid_results_files=None):
+                           iid_results_files=None, metrics='both'):
     """
     Plots log-likelihood (LL) and RMSE on ground truth test set vs. trials.
     Compares one or more active testing methods (each with its own line) and one IID baseline.
@@ -836,6 +836,7 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
         model_name: Surrogate model name fallback when saved models are not found.
         task_name: Task name for configuration.
         iid_results_files: List of paths to IID results CSV files (used to find saved models).
+        metrics: Which panels to include: 'both' (RMSE + log-likelihood), 'rmse', or 'll'.
     """
     print(f"Generating metrics vs trials plot -> {output_file}...")
     import pickle
@@ -1003,40 +1004,59 @@ def plot_metrics_vs_trials(active_series=None, iid_dfs=None, gt_df=None, output_
     colors = plt.cm.tab10.colors
     # markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', 'h', '*']
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    if metrics == 'both':
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        ax_rmse, ax_ll = axes[0], axes[1]
+    elif metrics == 'rmse':
+        fig, ax_rmse = plt.subplots(1, 1, figsize=(8, 6))
+        ax_ll = None
+    elif metrics == 'll':
+        fig, ax_ll = plt.subplots(1, 1, figsize=(8, 6))
+        ax_rmse = None
+    else:
+        raise ValueError(f"metrics must be 'both', 'rmse', or 'll', got {metrics!r}")
 
     # Plot 1: RMSE vs Trials
-    ax = axes[0]
-    for idx, (label, rmse_mean, rmse_std, trials, ll_mean, ll_std, num_runs) in enumerate(active_plot_data):
-        if len(rmse_mean) == 0:
-            continue
-        color = colors[idx % len(colors)]
-        lbl = f"{label}"
-        ax.plot(trials, rmse_mean, color=color, marker=None, label=lbl, markersize=4, linewidth=2.5)
-        if num_runs > 1:
-            ax.fill_between(trials,
-                            np.array(rmse_mean) - np.array(rmse_std),
-                            np.array(rmse_mean) + np.array(rmse_std),
-                            alpha=0.2, color=color)
-    if len(iid_rmse_mean) > 0:
-        ax.plot(iid_trials, iid_rmse_mean, 'k--', label=f'Random ({iid_label})', marker=None, markersize=4, linewidth=2.5)
-        if len(iid_dfs_without_labels) > 1:
-            ax.fill_between(iid_trials,
-                            np.array(iid_rmse_mean) - np.array(iid_rmse_std),
-                            np.array(iid_rmse_mean) + np.array(iid_rmse_std),
-                            alpha=0.2, color='gray')
-    if active_start_trial is not None:
-        ax.axvline(x=active_start_trial, color='gray', linestyle='--', linewidth=1, alpha=0.8, label='Active begins')
-    ax.set_xlabel('Number of Trials', fontsize=21)
-    ax.set_ylabel('Test RMSE', fontsize=21)
-    ax.tick_params(axis='x', labelsize=18)
-    ax.tick_params(axis='y', labelsize=18)
-    ax.set_title(r'RMSE vs. Trials $\downarrow$', fontsize=24, fontweight='bold')
-    ax.legend(fontsize=16)
-    ax.grid(True, alpha=0.3)
+    if ax_rmse is not None:
+        ax = ax_rmse
+        for idx, (label, rmse_mean, rmse_std, trials, ll_mean, ll_std, num_runs) in enumerate(active_plot_data):
+            if len(rmse_mean) == 0:
+                continue
+            color = colors[idx % len(colors)]
+            lbl = f"{label}"
+            ax.plot(trials, rmse_mean, color=color, marker=None, label=lbl, markersize=4, linewidth=2.5)
+            if num_runs > 1:
+                ax.fill_between(trials,
+                                np.array(rmse_mean) - np.array(rmse_std),
+                                np.array(rmse_mean) + np.array(rmse_std),
+                                alpha=0.2, color=color)
+        if len(iid_rmse_mean) > 0:
+            ax.plot(iid_trials, iid_rmse_mean, 'k--', label=f'Random ({iid_label})', marker=None, markersize=4, linewidth=2.5)
+            if len(iid_dfs_without_labels) > 1:
+                ax.fill_between(iid_trials,
+                                np.array(iid_rmse_mean) - np.array(iid_rmse_std),
+                                np.array(iid_rmse_mean) + np.array(iid_rmse_std),
+                                alpha=0.2, color='gray')
+        if active_start_trial is not None:
+            ax.axvline(x=active_start_trial, color='gray', linestyle='--', linewidth=1, alpha=0.8, label='Active begins')
+        ax.set_xlabel('Number of Trials', fontsize=21)
+        ax.set_ylabel('Test RMSE', fontsize=21)
+        ax.tick_params(axis='x', labelsize=18)
+        ax.tick_params(axis='y', labelsize=18)
+        ax.set_title(r'RMSE vs. Trials $\downarrow$', fontsize=24, fontweight='bold')
+        ax.legend(fontsize=16)
+        ax.grid(True, alpha=0.3)
 
     # Plot 2: Log-Likelihood vs Trials
-    ax = axes[1]
+    if ax_ll is None:
+        plt.suptitle(f'Task: {task_name} ({len(active_dfs)} runs)', fontsize=28)
+        plt.tight_layout()
+        plt.savefig(output_file, bbox_inches='tight', dpi=150)
+        plt.close()
+        print(f"Saved figure to {output_file}.")
+        return
+
+    ax = ax_ll
     # ll_match_label_added = False
     for idx, (label, rmse_mean, rmse_std, trials, ll_mean, ll_std, num_runs) in enumerate(active_plot_data):
         if len(ll_mean) == 0:
@@ -1328,6 +1348,10 @@ def main():
     parser_metrics.add_argument('--iid_results_dir', type=str, default=None, help='Path to single IID meta-folder (e.g. results/task_iid_offline_Model). One baseline line for all active methods.')
     parser_metrics.add_argument('--iid_label', type=str, default=None, help='Optional display label for IID baseline. If omitted, label is derived from dir name (e.g. Model).')
     parser_metrics.add_argument('--gt_results_file', type=str, required=True, help='Path to ground truth test set CSV')
+    parser_metrics.add_argument(
+        '--metrics', type=str, choices=['both', 'rmse', 'll'], default='both',
+        help="Panels to plot: 'both' (default), 'rmse' only, or 'll' (log-likelihood) only"
+    )
     parser_metrics.add_argument('--output_file', type=str, default='visualizations/robo_eval/metrics_vs_trials.png', help='Output file path')
     parser_metrics.add_argument('--model_name', type=str, default='SingleTaskGP', help='Surrogate model name')
     parser_metrics.add_argument('--task', type=str, default=None, help='Task name for configuration')
@@ -1408,7 +1432,8 @@ def main():
                                output_file=args.output_file,
                                model_name=args.model_name,
                                task_name=args.task,
-                               iid_results_files=iid_results_files if iid_results_files else None)
+                               iid_results_files=iid_results_files if iid_results_files else None,
+                               metrics=args.metrics)
 
     elif args.command == 'create-rmse-table':
         eval_df = _load_data(args.eval_results_file)
